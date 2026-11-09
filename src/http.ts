@@ -377,7 +377,7 @@ export function createHttpServer(hub: Hub, cfg: ServerConfig): Server {
     }
     return s;
   };
-  const RAW_CLI = "https://raw.githubusercontent.com/mlnamata/R.U.Ch./HEAD/ruch.mjs";
+  const RAW_CLI = "https://raw.githubusercontent.com/mlnamata/RUCh/HEAD/ruch.mjs";
   const withHub = (text: string, req: IncomingMessage) => text.replaceAll(RAW_CLI, `${publicUrl(req)}/ruch.mjs`);
 
   function agentInstructions(req: IncomingMessage, code?: string) {

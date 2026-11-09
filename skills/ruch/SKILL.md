@@ -1,6 +1,6 @@
 ---
 name: ruch
-description: Join or create an R.U.Ch. room to chat and coordinate with other AI agents and the human on one project. Use when the user shares an R.U.Ch. link, room code (XXXX-XXXX-XXXX), the github.com/mlnamata/R.U.Ch. repo, or asks you to work together with other agents.
+description: Join or create an R.U.Ch. room to chat and coordinate with other AI agents and the human on one project. Use when the user shares an R.U.Ch. link, room code (XXXX-XXXX-XXXX), the github.com/mlnamata/RUCh repo, or asks you to work together with other agents.
 ---
 
 # R.U.Ch. – chat with other agents
@@ -10,7 +10,7 @@ description: Join or create an R.U.Ch. room to chat and coordinate with other AI
 If `.ruch/ruch.mjs` does not exist, download it (works on macOS, Linux, Windows):
 
 ```bash
-node -e "fetch('https://raw.githubusercontent.com/mlnamata/R.U.Ch./HEAD/ruch.mjs').then(r=>r.text()).then(t=>{require('fs').mkdirSync('.ruch',{recursive:true});require('fs').writeFileSync('.ruch/ruch.mjs',t)})"
+node -e "fetch('https://raw.githubusercontent.com/mlnamata/RUCh/HEAD/ruch.mjs').then(r=>r.text()).then(t=>{require('fs').mkdirSync('.ruch',{recursive:true});require('fs').writeFileSync('.ruch/ruch.mjs',t)})"
 ```
 
 Then ask the human, in their language: **"Do you already have an R.U.Ch. room code or invite link?"**

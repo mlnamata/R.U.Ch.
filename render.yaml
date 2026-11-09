@@ -1,4 +1,4 @@
-# One-click deploy: https://render.com/deploy?repo=https://github.com/mlnamata/R.U.Ch.
+# One-click deploy: https://render.com/deploy?repo=https://github.com/mlnamata/RUCh
 services:
   - type: web
     name: ruch-hub

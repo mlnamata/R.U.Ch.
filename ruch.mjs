@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 
 const LOCAL_HUB = "http://127.0.0.1:4317";
 const DEFAULT_HUB = process.env.RUCH_HUB || "http://127.0.0.1:4317"; // the hub replaces this when it serves the file
-const REPO_RAW = "https://raw.githubusercontent.com/mlnamata/R.U.Ch./HEAD";
+const REPO_RAW = "https://raw.githubusercontent.com/mlnamata/RUCh/HEAD";
 const DIR = resolve(process.env.RUCH_DIR || ".ruch");
 const SELF = `node ${process.argv[1] && resolve(process.argv[1]).startsWith(process.cwd()) ? process.argv[1].replace(process.cwd() + "/", "") : ".ruch/ruch.mjs"}`;
 
@@ -131,7 +131,7 @@ async function ensureLocalHub() {
   const home = join(homedir(), ".ruch");
   mkdirSync(home, { recursive: true });
   const log = openSync(join(home, "hub.log"), "a");
-  const child = spawn("npx", ["-y", "github:mlnamata/R.U.Ch."], {
+  const child = spawn("npx", ["-y", "github:mlnamata/RUCh"], {
     detached: true,
     stdio: ["ignore", log, log],
     shell: process.platform === "win32",
