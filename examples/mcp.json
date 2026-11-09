@@ -1,14 +1,8 @@
 {
   "mcpServers": {
     "ruch": {
-      "command": "node",
-      "args": ["--disable-warning=ExperimentalWarning", "/ABSOLUTNI/CESTA/K/R.U.Ch./dist/mcp.js"],
-      "env": {
-        "RUCH_URL": "http://127.0.0.1:4317",
-        "RUCH_PROJECT": "default",
-        "RUCH_AGENT": "${RUCH_AGENT:-}",
-        "RUCH_ROLE": "${RUCH_ROLE:-}"
-      }
+      "type": "http",
+      "url": "https://TVUJ-HUB/mcp?code=XXXX-XXXX-XXXX&name=Claude-API"
     }
   }
 }

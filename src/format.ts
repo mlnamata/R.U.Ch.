@@ -95,7 +95,7 @@ export interface InboxView {
 export function inboxText(ib: InboxView): string {
   const out: string[] = [];
   if (ib.questions_for_me.length) {
-    out.push("## Otázky pro tebe (odpověz přes `answer`)", ...ib.questions_for_me.map(questionLine), "");
+    out.push("## Otázky pro tebe (odpověz)", ...ib.questions_for_me.map(questionLine), "");
   }
   const answered = ib.my_questions.filter((q) => q.status !== "open");
   const waiting = ib.my_questions.filter((q) => q.status === "open");
@@ -110,7 +110,7 @@ export function inboxText(ib: InboxView): string {
       }
       out.push("  " + messageLine(m));
     }
-    if (ib.more) out.push("  … další zprávy čekají, zavolej `inbox` znovu.");
+    if (ib.more) out.push("  … další zprávy čekají, načti inbox znovu.");
     out.push("");
   }
   if (ib.new_threads.length) out.push("## Nová vlákna", ...ib.new_threads.map((t) => `T${t.id} "${t.title}" (${t.by ?? "?"})`), "");
@@ -121,7 +121,7 @@ export function inboxText(ib: InboxView): string {
   if (ib.my_tasks.length) out.push("## Tvoje úkoly", ...ib.my_tasks.map(taskLine), "");
   if (ib.my_claims.length) out.push("## Tvoje zámky souborů", ...ib.my_claims.map(claimLine), "");
   if (ib.others_claims.length) out.push("## Soubory zamčené ostatními (needituj je)", ...ib.others_claims.map(claimLine), "");
-  if (out.length === 0) return `Nic nového pro ${ib.me.name}. (Můžeš použít wait_for_activity a počkat.)`;
+  if (out.length === 0) return `Nic nového pro ${ib.me.name}.`;
   return out.join("\n").trim();
 }
 
@@ -136,7 +136,7 @@ export function threadText(view: {
   const out = [threadHeader(t)];
   if (t.summary) out.push(`Shrnutí: ${t.summary}`);
   if (view.total > view.messages.length && view.messages.length) {
-    out.push(`(zobrazeno ${view.messages.length} z ${view.total} zpráv; starší: read_thread s before=M${view.messages[0].id})`);
+    out.push(`(zobrazeno ${view.messages.length} z ${view.total} zpráv; starší: before=${view.messages[0].id})`);
   }
   out.push("", ...view.messages.map((m) => messageLine(m, { full: true })));
   if (view.open_questions.length) out.push("", "Otevřené otázky:", ...view.open_questions.map(questionLine));

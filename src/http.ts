@@ -1,101 +1,97 @@
-import { readFile } from "node:fs/promises";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { extname, join, dirname } from "node:path";
+import { readFileSync } from "node:fs";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { timingSafeEqual } from "node:crypto";
-import { z } from "zod";
+import { arr, bool, dflt, int, nul, obj, oneOf, opt, str, tagged, ValidationError, type V } from "./validate.js";
 import { Hub, HubError } from "./hub.js";
+import { RuchClient } from "./client.js";
 import type { ServerConfig } from "./config.js";
-import type { HubEvent, Participant } from "./types.js";
+import {
+  claimLine,
+  inboxText,
+  knowledgeLine,
+  messageLine,
+  questionLine,
+  taskLine,
+  threadHeader,
+  threadText,
+  type InboxView,
+} from "./format.js";
+import type { Claim, Evidence, HubEvent, Knowledge, Message, Participant, Project, Question, Task, Thread } from "./types.js";
 
-const WEB_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "web");
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_BODY = 1_000_000;
 
 // ------------------------------------------------------------------ request schemas
 
-const evidence = z.array(
-  z.discriminatedUnion("type", [
-    z.object({ type: z.literal("file"), path: z.string().min(1), lines: z.string().optional(), quote: z.string().optional() }),
-    z.object({ type: z.literal("message"), id: z.number().int() }),
-    z.object({ type: z.literal("knowledge"), id: z.number().int() }),
-    z.object({ type: z.literal("command"), command: z.string().min(1), output: z.string().optional() }),
-    z.object({ type: z.literal("url"), url: z.string().min(1) }),
-  ]),
+const evidence = arr(
+  tagged<Evidence>("type", {
+    file: obj({ type: str(), path: str({ min: 1 }), lines: opt(str()), quote: opt(str()), checked: opt(bool) }) as V<Evidence>,
+    message: obj({ type: str(), id: int() }) as V<Evidence>,
+    knowledge: obj({ type: str(), id: int() }) as V<Evidence>,
+    command: obj({ type: str(), command: str({ min: 1 }), output: opt(str()) }) as V<Evidence>,
+    url: obj({ type: str(), url: str({ min: 1 }) }) as V<Evidence>,
+  }),
+  { max: 20 },
 );
-const confidence = z.enum(["certain", "likely", "guess"]);
-
+const confidence = oneOf("certain", "likely", "guess");
+const strs = arr(str(), { max: 50 });
 const S = {
-  join: z.object({ role: z.string().max(200).optional() }),
-  status: z.object({ text: z.string() }),
-  project: z.object({ name: z.string().optional(), brief: z.string().optional(), root_path: z.string().nullable().optional() }),
-  thread: z.object({
-    title: z.string(),
-    body: z.string().optional(),
-    parent_id: z.number().int().nullable().optional(),
-    mentions: z.array(z.string()).optional(),
+  room: obj({ name: opt(str({ max: 80 })), human_name: opt(str({ max: 40 })), token: opt(str()) }),
+  join: obj({ role: opt(str({ max: 60 })) }),
+  status: obj({ text: str() }),
+  project: obj({ name: opt(str()), brief: opt(str()) }),
+  thread: obj({ title: str(), body: opt(str()), parent_id: nul(int()), mentions: opt(strs) }),
+  message: obj({
+    kind: opt(oneOf("chat", "question", "answer", "decision", "handoff", "review", "status")),
+    body: str(),
+    mentions: opt(strs),
+    reply_to: nul(int()),
+    evidence: opt(evidence),
+    confidence: nul(confidence),
   }),
-  message: z.object({
-    kind: z.enum(["chat", "question", "answer", "decision", "handoff", "review", "status"]).optional(),
-    body: z.string(),
-    mentions: z.array(z.string()).optional(),
-    reply_to: z.number().int().nullable().optional(),
-    evidence: evidence.optional(),
-    confidence: confidence.nullable().optional(),
+  threadStatus: obj({ status: oneOf("open", "human_needed", "resolved"), reason: opt(str()) }),
+  summary: obj({ summary: str() }),
+  ask: obj({
+    to: nul(str()),
+    body: str(),
+    thread_id: nul(int()),
+    options: opt(arr(str(), { max: 6 })),
+    blocking: opt(bool),
+    wait_seconds: opt(int({ min: 0, max: 300 })),
   }),
-  threadStatus: z.object({ status: z.enum(["open", "human_needed", "resolved"]), reason: z.string().optional() }),
-  summary: z.object({ summary: z.string() }),
-  ask: z.object({
-    to: z.string().nullable().optional(),
-    body: z.string(),
-    thread_id: z.number().int().nullable().optional(),
-    options: z.array(z.string()).optional(),
-    blocking: z.boolean().optional(),
+  answer: obj({ body: dflt(str(), ""), confidence: opt(confidence), evidence: opt(evidence), choice: nul(str()) }),
+  cancel: obj({ reason: opt(str()) }),
+  knowledge: obj({
+    kind: oneOf("answer", "decision", "fact", "note"),
+    title: str(),
+    body: str(),
+    tags: opt(str()),
+    evidence: opt(evidence),
+    supersedes: nul(int()),
   }),
-  answer: z.object({
-    body: z.string().default(""),
-    confidence: confidence.optional(),
-    evidence: evidence.optional(),
-    choice: z.string().nullable().optional(),
+  dispute: obj({ reason: str() }),
+  claim: obj({ paths: arr(str(), { min: 1, max: 100 }), reason: opt(str()), minutes: opt(int()), thread_id: nul(int()) }),
+  release: obj({ paths: opt(strs) }),
+  check: obj({ paths: arr(str(), { min: 1, max: 100 }) }),
+  task: obj({ title: str(), details: opt(str()), assignee: nul(str()), thread_id: nul(int()) }),
+  taskPatch: obj({
+    status: opt(oneOf("todo", "doing", "review", "done", "blocked")),
+    assignee: nul(str()),
+    details: opt(str()),
+    take: opt(bool),
   }),
-  cancel: z.object({ reason: z.string().optional() }),
-  knowledge: z.object({
-    kind: z.enum(["answer", "decision", "fact", "note"]),
-    title: z.string(),
-    body: z.string(),
-    tags: z.string().optional(),
-    evidence: evidence.optional(),
-    supersedes: z.number().int().nullable().optional(),
+  handoff: obj({
+    thread_id: int(),
+    to: nul(str()),
+    summary: str(),
+    done: opt(strs),
+    next: opt(strs),
+    risks: opt(strs),
+    evidence: opt(evidence),
   }),
-  dispute: z.object({ reason: z.string() }),
-  claim: z.object({
-    paths: z.array(z.string()).min(1),
-    reason: z.string().optional(),
-    minutes: z.number().int().optional(),
-    thread_id: z.number().int().nullable().optional(),
-  }),
-  release: z.object({ paths: z.array(z.string()).optional() }),
-  check: z.object({ paths: z.array(z.string()).min(1) }),
-  task: z.object({
-    title: z.string(),
-    details: z.string().optional(),
-    assignee: z.string().nullable().optional(),
-    thread_id: z.number().int().nullable().optional(),
-  }),
-  taskPatch: z.object({
-    status: z.enum(["todo", "doing", "review", "done", "blocked"]).optional(),
-    assignee: z.string().nullable().optional(),
-    details: z.string().optional(),
-    take: z.boolean().optional(),
-  }),
-  handoff: z.object({
-    thread_id: z.number().int(),
-    to: z.string().nullable().optional(),
-    summary: z.string(),
-    done: z.array(z.string()).optional(),
-    next: z.array(z.string()).optional(),
-    risks: z.array(z.string()).optional(),
-    evidence: evidence.optional(),
-  }),
+  escalate: obj({ thread_id: int(), problem: str(), options: arr(str(), { min: 1, max: 6 }), recommendation: opt(str()) }),
 };
 
 // ------------------------------------------------------------------ plumbing
@@ -105,21 +101,24 @@ interface Ctx {
   res: ServerResponse;
   url: URL;
   params: string[];
-  me: () => Participant;
-  body: <T extends z.ZodType>(schema: T) => Promise<z.infer<T>>;
+  me: Participant;
+  role: "agent" | "owner";
+  key: string;
+  body: <T>(schema: V<T>) => Promise<T>;
 }
 type Handler = (ctx: Ctx) => Promise<unknown> | unknown;
+/** Renders a route's result as compact text for agents (Accept: text/plain). */
+type TextFn = (out: any) => string;
 
-function safeEqual(a: string, b: string) {
-  const x = Buffer.from(a);
-  const y = Buffer.from(b);
-  return x.length === y.length && timingSafeEqual(x, y);
-}
+const warn = (w?: string[]) => (w?.length ? "\n" + w.map((x) => `! ${x}`).join("\n") : "");
 
 function send(res: ServerResponse, status: number, data: unknown) {
-  const body = JSON.stringify(data);
   res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-  res.end(body);
+  res.end(JSON.stringify(data));
+}
+function sendText(res: ServerResponse, status: number, text: string, type = "text/plain") {
+  res.writeHead(status, { "content-type": `${type}; charset=utf-8`, "cache-control": "no-store" });
+  res.end(text);
 }
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
@@ -138,214 +137,402 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   }
 }
 
-const MIME: Record<string, string> = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".svg": "image/svg+xml",
+function header(req: IncomingMessage, name: string): string | null {
+  const h = req.headers[name];
+  const v = Array.isArray(h) ? h[0] : h;
+  if (!v) return null;
+  try {
+    return decodeURIComponent(v);
+  } catch {
+    return v;
+  }
+}
+
+function clientIp(req: IncomingMessage) {
+  const fwd = header(req, "x-forwarded-for");
+  return (fwd ? fwd.split(",")[0].trim() : req.socket.remoteAddress) ?? "?";
+}
+
+/** Fixed-window counter per key; small and self-pruning. */
+class Limiter {
+  private m = new Map<string, { n: number; reset: number }>();
+  constructor(
+    private max: number,
+    private windowMs: number,
+  ) {}
+  hit(key: string): boolean {
+    const t = Date.now();
+    const e = this.m.get(key);
+    if (!e || e.reset < t) {
+      if (this.m.size > 50_000) this.prune();
+      this.m.set(key, { n: 1, reset: t + this.windowMs });
+      return true;
+    }
+    e.n++;
+    return e.n <= this.max;
+  }
+  prune() {
+    const t = Date.now();
+    for (const [k, e] of this.m) if (e.reset < t) this.m.delete(k);
+  }
+}
+
+const STATIC: Record<string, [string, string]> = {
+  "/": ["web/index.html", "text/html"],
+  "/app.js": ["web/app.js", "text/javascript"],
+  "/style.css": ["web/style.css", "text/css"],
 };
 
-export function createHttpServer(hub: Hub, cfg: ServerConfig) {
-  const routes: Array<[string, RegExp, Handler]> = [];
-  const route = (method: string, pattern: string, h: Handler) =>
-    routes.push([method, new RegExp("^" + pattern.replace(/:(\w+)/g, "(\\d+)") + "$"), h]);
-  const id = (ctx: Ctx, i = 0) => Number(ctx.params[i]);
+export function createHttpServer(hub: Hub, cfg: ServerConfig): Server {
+  const routes: Array<[string, RegExp, Handler, TextFn | undefined]> = [];
+  const route = (method: string, pattern: string, h: Handler, text?: TextFn) =>
+    routes.push([method, new RegExp("^" + pattern.replace(/:(\w+)/g, "(\\d+)") + "$"), h, text]);
+  const id = (c: Ctx, i = 0) => Number(c.params[i]);
+  const pid = (c: Ctx) => c.me.project_id;
+  const qnum = (c: Ctx, k: string) => (c.url.searchParams.get(k) ? Number(c.url.searchParams.get(k)) : undefined);
+  const abortOnClose = (c: Ctx) => {
+    const ac = new AbortController();
+    c.res.on("close", () => ac.abort());
+    return ac.signal;
+  };
+  const publicUrl = (req: IncomingMessage) =>
+    cfg.publicUrl ?? `${header(req, "x-forwarded-proto")?.split(",")[0] ?? "http"}://${req.headers.host ?? `127.0.0.1:${cfg.port}`}`;
 
-  route("GET", "/api/health", () => ({ ok: true }));
-  // Needed by the web UI before it knows who it is.
-  route("GET", "/api/config", () => ({
-    humanName: cfg.hub.humanName,
-    defaultProject: cfg.defaultProject,
-    humanTokenRequired: !!cfg.humanToken,
-  }));
-  route("GET", "/api/state", (c) => hub.state(c.me().project_id));
-  route("GET", "/api/me", (c) => ({ me: hub.participantView(c.me()), project: hub.state(c.me().project_id).project }));
+  const createLimit = new Limiter(cfg.roomsPerIpPerHour, 3_600_000);
+  const authFailLimit = new Limiter(30, 600_000);
+
+  // ---------------------------------------------------------------- session & room
+
+  route("GET", "/api/me", (c) => {
+    const p = hub.projectById(pid(c));
+    return {
+      me: hub.participantView(c.me),
+      role: c.role,
+      project: { id: p.id, name: p.name, brief: p.brief },
+      // Only the owner learns the agent code (it is derived from the owner key).
+      agent_code: c.role === "owner" ? hub.agentCodeFor(c.key, p) : undefined,
+    };
+  }, (o) => `Jsi ${o.me.name} (${o.role === "owner" ? "člověk" : "agent"}) v místnosti "${o.project.name}".${o.project.brief ? `\nZadání: ${o.project.brief}` : ""}`);
   route("POST", "/api/join", async (c) => {
     const b = await c.body(S.join);
-    const p = c.me();
-    if (b.role) hub.join(projectOf(c), p.name, p.kind, b.role);
-    const project = hub.getProject(projectOf(c));
-    return { me: hub.participantView(hub.join(projectOf(c), p.name, p.kind)), project };
+    const me = hub.join(pid(c), c.me.name, c.me.kind, b.role);
+    return { me: hub.participantView(me), project: hub.projectById(pid(c)) };
+  }, (o) => `Připojen(a) jako ${o.me.name} do "${o.project.name}".${o.project.brief ? `\nZadání: ${o.project.brief}` : ""}`);
+  route("GET", "/api/state", (c) => ({ ...hub.state(pid(c)), role: c.role, me: hub.participantView(c.me) }));
+  route("POST", "/api/status", async (c) => hub.participantView(hub.setStatus(c.me, (await c.body(S.status)).text)), () => "OK");
+  route("PATCH", "/api/project", async (c) => hub.updateProject(c.me, await c.body(S.project)));
+  route("POST", "/api/room/rotate", (c) => {
+    if (c.role !== "owner") throw new HubError(403, "owner_only", "Kód může změnit jen vlastník místnosti.");
+    return { agent_code: hub.rotateAgentCode(c.me, c.key) };
   });
-  route("POST", "/api/status", async (c) => hub.participantView(hub.setStatus(c.me(), (await c.body(S.status)).text)));
-  route("PATCH", "/api/project", async (c) => hub.updateProject(c.me(), await c.body(S.project)));
-  route("GET", "/api/participants", (c) => hub.listParticipants(c.me().project_id));
-  route("GET", "/api/inbox", (c) => hub.inbox(c.me(), { peek: c.url.searchParams.get("peek") === "1" }));
-  route("GET", "/api/wait", async (c) => {
-    const timeout = Math.min(Number(c.url.searchParams.get("timeout") ?? 60), 300) * 1000;
-    const ac = new AbortController();
-    c.req.on("close", () => ac.abort());
-    return { activity: await hub.waitForActivity(c.me(), timeout, ac.signal) };
-  });
+  route("GET", "/api/participants", (c) => hub.listParticipants(pid(c)), (o: ReturnType<Hub["listParticipants"]>) =>
+    o.map((p) => `${p.name} (${p.kind === "human" ? "člověk" : p.role || "agent"}${p.online ? "" : ", offline"})${p.status_text ? ` – ${p.status_text}` : ""}`).join("\n"),
+  );
 
-  route("GET", "/api/threads", (c) => hub.listThreads(c.me().project_id, (c.url.searchParams.get("status") as never) || undefined));
-  route("POST", "/api/threads", async (c) => hub.createThread(c.me(), await c.body(S.thread)));
-  route("GET", "/api/threads/:id", (c) => {
-    const q = c.url.searchParams;
-    const num = (k: string) => (q.get(k) ? Number(q.get(k)) : undefined);
-    return hub.getThread(c.me().project_id, id(c), { since: num("since"), before: num("before"), limit: num("limit") });
-  });
-  route("POST", "/api/threads/:id/messages", async (c) => hub.post(c.me(), id(c), await c.body(S.message)));
+  // ---------------------------------------------------------------- inbox (optionally waits)
+
+  route("GET", "/api/inbox", async (c) => {
+    const wait = Math.min(qnum(c, "wait") ?? 0, 300);
+    if (wait > 0) await hub.waitForActivity(c.me, wait * 1000, abortOnClose(c));
+    return hub.inbox(c.me, { peek: c.url.searchParams.get("peek") === "1" });
+  }, (o: InboxView) => inboxText(o));
+
+  // ---------------------------------------------------------------- threads & messages
+
+  route("GET", "/api/threads", (c) => hub.listThreads(pid(c), (c.url.searchParams.get("status") as never) || undefined), (o: Thread[]) =>
+    o.length ? o.map(threadHeader).join("\n") : "Žádná vlákna.",
+  );
+  route("POST", "/api/threads", async (c) => hub.createThread(c.me, await c.body(S.thread)), (o) =>
+    `Vytvořeno ${threadHeader(o.thread)}${o.message ? ` (M${o.message.id})` : ""}${warn(o.warnings)}`,
+  );
+  route("GET", "/api/threads/:id", (c) =>
+    hub.getThread(pid(c), id(c), { since: qnum(c, "since"), before: qnum(c, "before"), limit: qnum(c, "limit") }),
+    (o) => threadText(o),
+  );
+  const postText = (o: { message: Message; warnings: string[]; thread: Thread }) =>
+    `OK M${o.message.id} v T${o.thread.id}${o.thread.status !== "open" ? ` (vlákno: ${o.thread.status})` : ""}${warn(o.warnings)}`;
+  route("POST", "/api/threads/:id/messages", async (c) => hub.post(c.me, id(c), await c.body(S.message)), postText);
   route("POST", "/api/threads/:id/status", async (c) => {
     const b = await c.body(S.threadStatus);
-    return hub.setThreadStatus(c.me(), id(c), b.status, b.reason);
-  });
-  route("POST", "/api/threads/:id/summary", async (c) => hub.setSummary(c.me(), id(c), (await c.body(S.summary)).summary));
+    return hub.setThreadStatus(c.me, id(c), b.status, b.reason);
+  }, threadHeader);
+  route("POST", "/api/threads/:id/summary", async (c) => hub.setSummary(c.me, id(c), (await c.body(S.summary)).summary), threadHeader);
 
-  route("GET", "/api/questions", (c) => {
-    const me = c.me();
-    return hub.listQuestions(me.project_id, {
-      status: c.url.searchParams.get("status") ?? undefined,
-      for: c.url.searchParams.get("for") === "me" ? me : undefined,
-    });
-  });
-  route("POST", "/api/questions", async (c) => hub.ask(c.me(), await c.body(S.ask)));
-  route("GET", "/api/questions/:id", (c) => hub.getQuestion(c.me().project_id, id(c)));
-  route("GET", "/api/questions/:id/wait", async (c) => {
-    const timeout = Math.min(Number(c.url.searchParams.get("timeout") ?? 60), 300) * 1000;
-    const ac = new AbortController();
-    c.req.on("close", () => ac.abort());
-    return hub.waitForAnswer(c.me().project_id, id(c), timeout, ac.signal);
-  });
-  route("POST", "/api/questions/:id/answer", async (c) => hub.answer(c.me(), id(c), await c.body(S.answer)));
-  route("POST", "/api/questions/:id/cancel", async (c) => hub.cancelQuestion(c.me(), id(c), (await c.body(S.cancel)).reason));
+  // ---------------------------------------------------------------- questions
 
-  route("GET", "/api/knowledge", (c) =>
-    hub.searchKnowledge(c.me().project_id, c.url.searchParams.get("q") ?? "", Number(c.url.searchParams.get("limit") ?? 8)),
+  route("GET", "/api/questions", (c) =>
+    hub.listQuestions(pid(c), { status: c.url.searchParams.get("status") ?? undefined, for: c.url.searchParams.get("for") === "me" ? c.me : undefined }),
+    (o: Question[]) => (o.length ? o.map(questionLine).join("\n") : "Žádné otázky."),
   );
-  route("POST", "/api/knowledge", async (c) => hub.addKnowledge(c.me(), await c.body(S.knowledge)));
-  route("GET", "/api/knowledge/:id", (c) => hub.getKnowledge(c.me().project_id, id(c)));
-  route("POST", "/api/knowledge/:id/verify", (c) => hub.verifyKnowledge(c.me(), id(c)));
-  route("POST", "/api/knowledge/:id/dispute", async (c) => hub.disputeKnowledge(c.me(), id(c), (await c.body(S.dispute)).reason));
-
-  route("GET", "/api/claims", (c) => hub.listClaims(c.me().project_id));
-  route("POST", "/api/claims", async (c) => hub.claim(c.me(), await c.body(S.claim)));
-  route("POST", "/api/claims/release", async (c) => hub.release(c.me(), (await c.body(S.release)).paths));
-  route("POST", "/api/claims/check", async (c) => {
-    const me = c.me();
-    return { conflicts: hub.checkPaths(me.project_id, (await c.body(S.check)).paths, me.id) };
+  route("POST", "/api/questions", async (c) => {
+    const b = await c.body(S.ask);
+    const r = hub.ask(c.me, b);
+    const question = b.wait_seconds ? await hub.waitForAnswer(pid(c), r.question.id, b.wait_seconds * 1000, abortOnClose(c)) : r.question;
+    return { ...r, question };
+  }, (o) => {
+    let t = questionLine(o.question);
+    if (o.question.status === "open") t = `Položeno: ${t}`;
+    if (o.similar_knowledge.length) t += "\nPodobné už v paměti (pokud sedí, otázku zruš):\n" + o.similar_knowledge.map(knowledgeLine).join("\n");
+    return t + warn(o.warnings);
   });
+  route("GET", "/api/questions/:id", async (c) => {
+    const wait = Math.min(qnum(c, "wait") ?? 0, 300);
+    return hub.waitForAnswer(pid(c), id(c), wait * 1000, abortOnClose(c));
+  }, questionLine);
+  route("POST", "/api/questions/:id/answer", async (c) => hub.answer(c.me, id(c), await c.body(S.answer)), (o) =>
+    `OK Q${o.question.id} zodpovězena${o.question.knowledge_id ? ` → K${o.question.knowledge_id}` : ""}${warn(o.warnings)}`,
+  );
+  route("POST", "/api/questions/:id/cancel", async (c) => hub.cancelQuestion(c.me, id(c), (await c.body(S.cancel)).reason), questionLine);
+  route("POST", "/api/escalate", async (c) => {
+    const b = await c.body(S.escalate);
+    const r = hub.ask(c.me, {
+      to: "human",
+      body: b.problem + (b.recommendation ? `\nDoporučuji: ${b.recommendation}` : ""),
+      thread_id: b.thread_id,
+      options: b.options,
+      blocking: true,
+    });
+    hub.setThreadStatus(c.me, b.thread_id, "human_needed", `čeká na odpověď Q${r.question.id}`);
+    return r;
+  }, (o) => `Eskalováno jako Q${o.question.id}, vlákno T${o.question.thread_id} čeká na člověka. Do něj nepiš; dělej jinou práci nebo čekej (inbox --wait).`);
 
-  route("GET", "/api/tasks", (c) => hub.listTasks(c.me().project_id, { status: c.url.searchParams.get("status") ?? undefined }));
-  route("POST", "/api/tasks", async (c) => hub.createTask(c.me(), await c.body(S.task)));
-  route("PATCH", "/api/tasks/:id", async (c) => hub.updateTask(c.me(), id(c), await c.body(S.taskPatch)));
+  // ---------------------------------------------------------------- knowledge
 
-  route("POST", "/api/handoff", async (c) => hub.handoff(c.me(), await c.body(S.handoff)));
+  route("GET", "/api/knowledge", (c) => hub.searchKnowledge(pid(c), c.url.searchParams.get("q") ?? "", qnum(c, "limit") ?? 6), (o: Knowledge[]) =>
+    o.length ? o.map(knowledgeLine).join("\n") : "V paměti nic takového není.",
+  );
+  route("POST", "/api/knowledge", async (c) => hub.addKnowledge(c.me, await c.body(S.knowledge)), knowledgeLine);
+  route("GET", "/api/knowledge/:id", (c) => hub.getKnowledge(pid(c), id(c)), knowledgeLine);
+  route("POST", "/api/knowledge/:id/verify", (c) => hub.verifyKnowledge(c.me, id(c)), knowledgeLine);
+  route("POST", "/api/knowledge/:id/dispute", async (c) => hub.disputeKnowledge(c.me, id(c), (await c.body(S.dispute)).reason), knowledgeLine);
 
-  // ------------------------------------------------------------------ identity
+  // ---------------------------------------------------------------- claims
 
-  function param(req: IncomingMessage, url: URL, header: string, query: string): string | null {
-    const h = req.headers[header];
-    const v = (Array.isArray(h) ? h[0] : h) ?? url.searchParams.get(query);
-    if (!v) return null;
-    try {
-      return decodeURIComponent(v);
-    } catch {
-      return v;
-    }
-  }
-  function projectOf(c: { req: IncomingMessage; url: URL }) {
-    return param(c.req, c.url, "x-ruch-project", "project") ?? cfg.defaultProject;
-  }
-  function identify(req: IncomingMessage, url: URL): Participant {
-    const name = param(req, url, "x-ruch-name", "name");
-    if (!name) throw new HubError(401, "no_identity", "Chybí jméno účastníka (hlavička X-Ruch-Name).");
-    const kind = param(req, url, "x-ruch-kind", "kind") === "human" ? "human" : "agent";
-    if (kind === "human" && cfg.humanToken) {
-      const t = param(req, url, "x-ruch-human-token", "human_token");
-      if (!t || !safeEqual(t, cfg.humanToken)) throw new HubError(403, "not_human", "Neplatný token člověka.");
-    }
-    const project = projectOf({ req, url });
-    // The default project is created on demand; other projects too (local tool, cheap).
-    hub.ensureProject(project);
-    return hub.join(project, name, kind);
-  }
-  function authorized(req: IncomingMessage, url: URL) {
-    if (!cfg.token) return true;
+  const claimsText = (o: Claim[]) => (o.length ? o.map(claimLine).join("\n") : "Nic není zamčené.");
+  route("GET", "/api/claims", (c) => hub.listClaims(pid(c)), claimsText);
+  route("POST", "/api/claims", async (c) => hub.claim(c.me, await c.body(S.claim)), (o) =>
+    [o.granted.length ? `Zamčeno: ${o.granted.join(", ")}` : "", o.conflicts.length ? "KONFLIKT – needituj:\n" + o.conflicts.map(claimLine).join("\n") : ""]
+      .filter(Boolean)
+      .join("\n") || "Nic nezamčeno.",
+  );
+  route("POST", "/api/claims/release", async (c) => hub.release(c.me, (await c.body(S.release)).paths), (o) => `Uvolněno: ${o.released}`);
+  route("POST", "/api/claims/check", async (c) => ({ conflicts: hub.checkPaths(pid(c), (await c.body(S.check)).paths, c.me.id) }), (o) =>
+    o.conflicts.length ? o.conflicts.map(claimLine).join("\n") : "Volné.",
+  );
+
+  // ---------------------------------------------------------------- tasks & handoff
+
+  route("GET", "/api/tasks", (c) => hub.listTasks(pid(c), { status: c.url.searchParams.get("status") ?? undefined }), (o: Task[]) =>
+    o.length ? o.map(taskLine).join("\n") : "Žádné úkoly.",
+  );
+  route("POST", "/api/tasks", async (c) => hub.createTask(c.me, await c.body(S.task)), taskLine);
+  route("PATCH", "/api/tasks/:id", async (c) => hub.updateTask(c.me, id(c), await c.body(S.taskPatch)), taskLine);
+  route("POST", "/api/handoff", async (c) => hub.handoff(c.me, await c.body(S.handoff)), postText);
+
+  // ---------------------------------------------------------------- auth
+
+  function authenticate(req: IncomingMessage): { me: Participant; role: Ctx["role"]; key: string; project: Project } {
     const h = req.headers.authorization;
-    const t = h?.startsWith("Bearer ") ? h.slice(7) : url.searchParams.get("token");
-    return !!t && safeEqual(t, cfg.token);
-  }
-
-  // ------------------------------------------------------------------ SSE
-
-  function events(req: IncomingMessage, res: ServerResponse, url: URL) {
-    const me = identify(req, url);
-    res.writeHead(200, {
-      "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-store",
-      connection: "keep-alive",
-    });
-    res.write(`event: hello\ndata: ${JSON.stringify({ me: hub.participantView(me) })}\n\n`);
-    const onEvent = (e: HubEvent) => {
-      if (e.projectId !== me.project_id) return;
-      res.write(`event: ${e.type}\ndata: ${JSON.stringify(e.data)}\n\n`);
-    };
-    hub.events.on("event", onEvent);
-    const ping = setInterval(() => res.write(": ping\n\n"), 25_000);
-    req.on("close", () => {
-      clearInterval(ping);
-      hub.events.off("event", onEvent);
-    });
-  }
-
-  // ------------------------------------------------------------------ static files
-
-  async function serveStatic(res: ServerResponse, pathname: string) {
-    const file = pathname === "/" ? "index.html" : pathname.slice(1);
-    if (!/^[\w.-]+$/.test(file)) return send(res, 404, { error: "not_found" });
-    try {
-      const data = await readFile(join(WEB_DIR, file));
-      res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream" });
-      res.end(data);
-    } catch {
-      send(res, 404, { error: "not_found" });
+    const key = h?.startsWith("Bearer ") ? h.slice(7).trim() : null;
+    if (!key) throw new HubError(401, "no_key", "Chybí kód místnosti (hlavička Authorization: Bearer <kód>).");
+    const ip = clientIp(req);
+    const auth = hub.authenticate(key);
+    if (!auth) {
+      if (!authFailLimit.hit(ip)) throw new HubError(429, "too_many_attempts", "Příliš mnoho neplatných kódů. Zkus to za 10 minut.");
+      throw new HubError(401, "bad_key", "Neplatný kód místnosti. Zkontroluj ho, nebo vytvoř novou místnost.");
     }
+    const kind = auth.role === "owner" ? "human" : "agent";
+    let name = header(req, "x-ruch-name");
+    if (!name) {
+      if (kind === "agent") throw new HubError(400, "no_name", "Chybí jméno agenta (hlavička X-Ruch-Name).");
+      name = hub.listParticipants(auth.project.id).find((p) => p.kind === "human")?.name ?? cfg.hub.humanName;
+    }
+    const me = hub.join(auth.project.id, name, kind);
+    hub.seen(me);
+    return { me, role: auth.role, key, project: auth.project };
   }
 
-  return createServer(async (req, res) => {
+  // ---------------------------------------------------------------- SSE (auth by header; the UI uses fetch streaming)
+
+  function events(req: IncomingMessage, res: ServerResponse) {
+    const { me } = authenticate(req);
+    res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
+    res.write(`event: hello\ndata: {}\n\n`);
+    const off = hub.subscribe(me.project_id, (e: HubEvent) => res.write(`event: ${e.type}\ndata: ${JSON.stringify(e.data)}\n\n`));
+    const ping = setInterval(() => res.write(": ping\n\n"), 25_000);
+    res.on("close", () => {
+      clearInterval(ping);
+      off();
+    });
+  }
+
+  // ---------------------------------------------------------------- public files (cached in memory once, tiny)
+
+  const fileCache = new Map<string, string>();
+  const readCached = (rel: string) => {
+    let s = fileCache.get(rel);
+    if (s === undefined) {
+      s = readFileSync(join(ROOT, rel), "utf8");
+      fileCache.set(rel, s);
+    }
+    return s;
+  };
+  const RAW_CLI = "https://raw.githubusercontent.com/mlnamata/R.U.Ch./HEAD/ruch.mjs";
+  const withHub = (text: string, req: IncomingMessage) => text.replaceAll(RAW_CLI, `${publicUrl(req)}/ruch.mjs`);
+
+  function agentInstructions(req: IncomingMessage, code?: string) {
+    const hubUrl = publicUrl(req);
+    return `# R.U.Ch. – připojení agenta${code ? ` do místnosti ${code}` : ""}
+
+You are an AI agent. R.U.Ch. is a chat hub where AI agents and their human coordinate on one project.
+
+With a shell (Claude Code, Cursor, Codex, Antigravity, VS Code agent):
+  node -e "fetch('${hubUrl}/ruch.mjs').then(r=>r.text()).then(t=>{require('fs').mkdirSync('.ruch',{recursive:true});require('fs').writeFileSync('.ruch/ruch.mjs',t)})"
+  node .ruch/ruch.mjs ${code ? `join ${code}` : "new"} --name <YourName>
+Then follow \`node .ruch/ruch.mjs help\` (rules: ${hubUrl}/skill.md). Optional: \`node .ruch/ruch.mjs skill\` installs the skill.
+
+Without a shell (ChatGPT, Claude.ai connectors…): add a remote MCP server
+  URL: ${hubUrl}/mcp?code=${code ?? "<CODE>"}&name=<YourName>
+
+Ask the human (in their language) before joining if you were not given a code: "Do you already have an R.U.Ch. room code? If not, I will create one."
+`;
+  }
+
+  async function servePublic(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
+    if (req.method !== "GET" && req.method !== "HEAD") return false;
+    const p = url.pathname;
+    const st = STATIC[p];
+    if (st) {
+      sendText(res, 200, readCached(st[0]), st[1]);
+      return true;
+    }
+    if (p === "/ruch.mjs") {
+      sendText(res, 200, readCached("ruch.mjs").replace('"http://127.0.0.1:4317"', JSON.stringify(publicUrl(req))), "text/javascript");
+      return true;
+    }
+    if (p === "/skill.md") {
+      sendText(res, 200, withHub(readCached("skills/ruch/SKILL.md"), req), "text/markdown");
+      return true;
+    }
+    if (p === "/llms.txt" || p === "/agents.txt") {
+      sendText(res, 200, agentInstructions(req));
+      return true;
+    }
+    const j = /^\/j\/([0-9A-Za-z-]{4,40})$/.exec(p);
+    if (j) {
+      sendText(res, 200, agentInstructions(req, j[1].toUpperCase()));
+      return true;
+    }
+    return false;
+  }
+
+  // ---------------------------------------------------------------- remote MCP (stateless)
+
+  async function mcp(req: IncomingMessage, res: ServerResponse, url: URL) {
+    const code = url.searchParams.get("code") ?? (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
+    const name = url.searchParams.get("name") ?? header(req, "x-ruch-name") ?? "Agent";
+    if (!code) throw new HubError(401, "no_key", "Přidej ?code=<kód místnosti>&name=<jméno> do URL MCP serveru.");
+    if (!hub.authenticate(code)) {
+      if (!authFailLimit.hit(clientIp(req))) throw new HubError(429, "too_many_attempts", "Příliš mnoho neplatných kódů.");
+      throw new HubError(401, "bad_key", "Neplatný kód místnosti.");
+    }
+    if (req.method !== "POST") {
+      res.writeHead(405, { allow: "POST" }).end();
+      return;
+    }
+    const body = await readJson(req);
+    // The MCP SDK costs ~12 MB, so it is loaded only when a client actually uses /mcp.
+    const [{ StreamableHTTPServerTransport }, { buildMcpServer }] = await Promise.all([
+      import("@modelcontextprotocol/sdk/server/streamableHttp.js"),
+      import("./tools.js"),
+    ]);
+    // Tools talk to this same server over loopback, so they reuse every rule and text renderer.
+    const port = (server.address() as AddressInfo).port;
+    const client = new RuchClient({ url: `http://127.0.0.1:${port}`, key: code, name });
+    const mcpServer = buildMcpServer(client);
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    res.on("close", () => {
+      transport.close();
+      mcpServer.close();
+    });
+    await mcpServer.connect(transport);
+    await transport.handleRequest(req, res, body);
+  }
+
+  // ---------------------------------------------------------------- server
+
+  const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     try {
-      if (!url.pathname.startsWith("/api/")) {
-        if (req.method !== "GET") return send(res, 405, { error: "method_not_allowed" });
-        return await serveStatic(res, url.pathname);
+      if (await servePublic(req, res, url)) return;
+      if (url.pathname === "/mcp") return await mcp(req, res, url);
+      if (!url.pathname.startsWith("/api/")) return send(res, 404, { error: "not_found" });
+      if (url.pathname === "/api/health") return send(res, 200, { ok: true });
+      if (url.pathname === "/api/rooms" && req.method === "POST") {
+        const b = S.room(await readJson(req), "");
+        if (cfg.createToken && b.token !== cfg.createToken) throw new HubError(403, "create_token", "Tento hub vyžaduje token pro vytvoření místnosti.");
+        if (!createLimit.hit(clientIp(req))) throw new HubError(429, "too_many_rooms", "Příliš mnoho nových místností z této adresy. Zkus to později.");
+        const r = hub.createRoom({ name: b.name, humanName: b.human_name });
+        const base = publicUrl(req);
+        return send(res, 200, {
+          room: r.project.name,
+          agent_code: r.agentCode,
+          owner_key: r.ownerKey,
+          owner_url: `${base}/#o=${r.ownerKey}`,
+          invite_url: `${base}/j/${r.agentCode}`,
+          human: r.human.name,
+        });
       }
-      const open = url.pathname === "/api/config" || url.pathname === "/api/health";
-      if (!open && !authorized(req, url)) throw new HubError(401, "unauthorized", "Chybí nebo nesedí RUCH_TOKEN.");
-      if (url.pathname === "/api/events" && req.method === "GET") return events(req, res, url);
-      for (const [method, re, handler] of routes) {
+      if (url.pathname === "/api/events" && req.method === "GET") return events(req, res);
+
+      for (const [method, re, handler, toText] of routes) {
         if (method !== req.method) continue;
         const m = re.exec(url.pathname);
         if (!m) continue;
-        let cached: Participant | null = null;
+        const a = authenticate(req);
         const ctx: Ctx = {
           req,
           res,
           url,
           params: m.slice(1),
-          me: () => (cached ??= identify(req, url)),
-          body: async (schema) => {
-            const parsed = schema.safeParse(await readJson(req));
-            if (!parsed.success) {
-              throw new HubError(
-                400,
-                "bad_request",
-                "Neplatný požadavek: " + parsed.error.issues.map((i) => `${i.path.join(".") || "(tělo)"}: ${i.message}`).join("; "),
-              );
-            }
-            return parsed.data;
-          },
+          me: a.me,
+          role: a.role,
+          key: a.key,
+          body: async (schema) => schema(await readJson(req), ""),
         };
         const out = await handler(ctx);
-        if (!res.headersSent) send(res, 200, out);
-        return;
+        if (res.headersSent || res.destroyed) return;
+        if (toText && (req.headers.accept ?? "").startsWith("text/plain")) return sendText(res, 200, toText(out));
+        return send(res, 200, out);
       }
       send(res, 404, { error: "not_found", message: `Neznámý endpoint ${req.method} ${url.pathname}` });
     } catch (e) {
-      if (res.headersSent) return res.end();
-      if (e instanceof HubError) return send(res, e.status, { error: e.code, message: e.message, details: e.details });
+      if (res.headersSent) return void res.end();
+      const err = e instanceof ValidationError ? new HubError(400, "bad_request", `Neplatný požadavek: ${e.message}`) : e;
+      if (err instanceof HubError) {
+        if ((req.headers.accept ?? "").startsWith("text/plain")) return sendText(res, err.status, `CHYBA: ${err.message}`);
+        return send(res, err.status, { error: err.code, message: err.message, details: err.details });
+      }
       console.error(e);
-      send(res, 500, { error: "internal", message: String((e as Error)?.message ?? e) });
+      send(res, 500, { error: "internal", message: "Interní chyba serveru." });
     }
   });
+
+  const timer = setInterval(() => {
+    try {
+      const r = hub.cleanup();
+      createLimit.prune();
+      authFailLimit.prune();
+      if (r.roomsDeleted) console.log(`Úklid: smazáno ${r.roomsDeleted} neaktivních místností.`);
+    } catch (e) {
+      console.error("Úklid selhal:", e);
+    }
+  }, 10 * 60_000);
+  timer.unref();
+  server.on("close", () => clearInterval(timer));
+  // Agents long-poll up to 5 minutes.
+  server.requestTimeout = 330_000;
+  server.headersTimeout = 30_000;
+  server.keepAliveTimeout = 10_000;
+  return server;
 }

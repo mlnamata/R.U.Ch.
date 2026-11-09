@@ -1,0 +1,11 @@
+{
+  "name": "ruch",
+  "owner": { "name": "mlnamata" },
+  "plugins": [
+    {
+      "name": "ruch",
+      "source": "./",
+      "description": "Join or create an R.U.Ch. room to chat and coordinate with other AI agents and the human."
+    }
+  ]
+}

@@ -4,20 +4,18 @@
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 
-const params = new URLSearchParams(location.search);
 const saved = (k) => {
   try { return localStorage.getItem(k); } catch { return null; }
 };
 const save = (k, v) => {
   try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* private mode */ }
 };
-if (params.get("token")) save("ruch.token", params.get("token"));
 
 const S = {
+  key: null, // owner key of the open room (from #o=…)
   me: null,
-  project: params.get("project") || null,
-  token: saved("ruch.token"),
-  humanToken: saved("ruch.humanToken"),
+  role: null,
+  agentCode: null,
   state: null,
   threadId: null,
   thread: null,
@@ -25,24 +23,27 @@ const S = {
   filter: "",
 };
 
+// Rooms this browser owns, so the human can come back without the link.
+const rooms = () => { try { return JSON.parse(saved("ruch.rooms") || "[]"); } catch { return []; } };
+function rememberRoom(key, name) {
+  const list = rooms().filter((r) => r.key !== key);
+  list.unshift({ key, name, at: Date.now() });
+  save("ruch.rooms", JSON.stringify(list.slice(0, 30)));
+}
+
 // ------------------------------------------------------------------ API
 
 async function api(method, path, body) {
-  const headers = { "x-ruch-name": encodeURIComponent(S.me), "x-ruch-kind": "human", "x-ruch-project": encodeURIComponent(S.project) };
-  if (S.token) headers.authorization = "Bearer " + S.token;
-  if (S.humanToken) headers["x-ruch-human-token"] = S.humanToken;
+  const headers = { authorization: "Bearer " + S.key };
+  if (S.me) headers["x-ruch-name"] = encodeURIComponent(S.me);
   if (body !== undefined) headers["content-type"] = "application/json";
   const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
-  if (res.status === 401 && data.error === "unauthorized") {
-    const t = prompt("Hub vyžaduje přístupový token (RUCH_TOKEN):");
-    if (t) { S.token = t; save("ruch.token", t); return api(method, path, body); }
+  if (!res.ok) {
+    const err = new Error(data.message || `HTTP ${res.status}`);
+    err.code = data.error;
+    throw err;
   }
-  if (res.status === 403 && data.error === "not_human") {
-    const t = prompt("Zadej token člověka (RUCH_HUMAN_TOKEN):");
-    if (t) { S.humanToken = t; save("ruch.humanToken", t); return api(method, path, body); }
-  }
-  if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
   return data;
 }
 
@@ -236,7 +237,6 @@ async function openThread(id) {
   scrollBottom();
   renderThreads();
   renderReplyTo();
-  history.replaceState(null, "", `#T${id}`);
 }
 
 function renderThreadHead() {
@@ -292,42 +292,56 @@ function scheduleRefresh() {
   refreshTimer = setTimeout(() => act(loadState), 250);
 }
 
-function connect() {
-  const q = new URLSearchParams({ name: S.me, kind: "human", project: S.project });
-  if (S.token) q.set("token", S.token);
-  if (S.humanToken) q.set("human_token", S.humanToken);
-  const es = new EventSource("/api/events?" + q);
-  es.addEventListener("open", () => $("#conn").classList.add("on"));
-  es.addEventListener("error", () => $("#conn").classList.remove("on"));
-  es.addEventListener("message", (e) => {
-    const m = JSON.parse(e.data);
-    if (S.thread && m.thread_id === S.threadId && !$("#m" + m.id)) {
+/** Server-sent events over fetch, so the room key travels in a header, not in the URL. */
+async function connect() {
+  const conn = $("#conn");
+  for (let delay = 1000; ; delay = Math.min(delay * 2, 30000)) {
+    try {
+      const res = await fetch("/api/events", { headers: { authorization: "Bearer " + S.key, "x-ruch-name": encodeURIComponent(S.me) } });
+      if (!res.ok || !res.body) throw new Error("HTTP " + res.status);
+      conn.classList.add("on");
+      delay = 1000;
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += value;
+        let i;
+        while ((i = buf.indexOf("\n\n")) >= 0) {
+          const chunk = buf.slice(0, i);
+          buf = buf.slice(i + 2);
+          const type = /^event: (.+)$/m.exec(chunk)?.[1];
+          const data = /^data: (.+)$/m.exec(chunk)?.[1];
+          if (type && data) onEvent(type, JSON.parse(data));
+        }
+      }
+    } catch { /* reconnect below */ }
+    conn.classList.remove("on");
+    await new Promise((r) => setTimeout(r, delay));
+    act(loadState);
+  }
+}
+
+function onEvent(type, d) {
+  if (type === "message") {
+    if (S.thread && d.thread_id === S.threadId && !$("#m" + d.id)) {
       const el = $("#messages");
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-      el.insertAdjacentHTML("beforeend", messageHtml(m));
-      if (atBottom || m.author === S.me) scrollBottom();
+      el.insertAdjacentHTML("beforeend", messageHtml(d));
+      if (atBottom || d.author === S.me) scrollBottom();
     }
-    if (m.mentions.includes(S.me) && m.author !== S.me && document.hidden) notify(`${m.author}: ${m.body.slice(0, 120)}`);
-    scheduleRefresh();
-  });
-  es.addEventListener("thread", (e) => {
-    const t = JSON.parse(e.data);
-    if (S.thread && t.id === S.threadId) {
-      S.thread.thread = t;
+    if (d.mentions.includes(S.me) && d.author !== S.me && document.hidden) notify(`${d.author}: ${d.body.slice(0, 120)}`);
+  } else if (type === "thread") {
+    if (S.thread && d.id === S.threadId) {
+      S.thread.thread = d;
       renderThreadHead();
     }
-    if (t.status === "human_needed" && document.hidden) notify(`Vlákno T${t.id} čeká na tebe: ${t.title}`);
-    scheduleRefresh();
-  });
-  for (const ev of ["question", "knowledge", "claim", "task", "participant"]) {
-    es.addEventListener(ev, (e) => {
-      if (ev === "question") {
-        const q = JSON.parse(e.data);
-        if (q.status === "open" && (q.target === S.me || q.target === null) && document.hidden) notify(`Otázka od ${q.asked_by}: ${q.body.slice(0, 120)}`);
-      }
-      scheduleRefresh();
-    });
+    if (d.status === "human_needed" && document.hidden) notify(`Vlákno T${d.id} čeká na tebe: ${d.title}`);
+  } else if (type === "question" && d.status === "open" && (d.target === S.me || d.target === null) && document.hidden) {
+    notify(`Otázka od ${d.asked_by}: ${d.body.slice(0, 120)}`);
   }
+  if (type !== "hello") scheduleRefresh();
 }
 
 function notify(text) {
@@ -431,14 +445,13 @@ function bind() {
     const p = S.state.project;
     f.name.value = p.name;
     f.brief.value = p.brief;
-    f.root_path.value = p.root_path || "";
     $("#dlg-brief").showModal();
   });
   $("#dlg-brief").addEventListener("close", () => {
     if ($("#dlg-brief").returnValue !== "ok") return;
     const f = $("#brief-form");
     act(async () => {
-      await api("PATCH", "/api/project", { name: f.name.value, brief: f.brief.value, root_path: f.root_path.value.trim() || null });
+      await api("PATCH", "/api/project", { name: f.name.value, brief: f.brief.value });
       toast("Zadání uloženo.");
       await loadState();
     });
@@ -478,6 +491,28 @@ function bind() {
     if (sel) act(() => api("PATCH", `/api/tasks/${sel.dataset.taskStatus}`, { status: sel.value }));
   });
 
+  $("#btn-invite").addEventListener("click", () => {
+    const link = `${location.origin}/j/${S.agentCode}`;
+    $("#invite-text").value = `Připoj se do R.U.Ch. (chat AI agentů na tomto projektu): ${link}\nPostupuj podle instrukcí na tom odkazu. Jméno si zvol krátké, bez mezer.`;
+    $("#invite-mcp").value = `${location.origin}/mcp?code=${S.agentCode}&name=ChatGPT`;
+    $("#invite-code").textContent = S.agentCode;
+    $("#dlg-invite").showModal();
+  });
+  $("#dlg-invite").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-copy],[data-copy-owner]");
+    if (!b) return;
+    const text = b.dataset.copy ? $("#" + b.dataset.copy).value : `${location.origin}/#o=${S.key}`;
+    navigator.clipboard?.writeText(text).then(() => toast("Zkopírováno."), () => toast("Kopírování selhalo – označ text ručně.", true));
+  });
+  $("#btn-rotate").addEventListener("click", () => {
+    if (!confirm("Vygenerovat nový kód? Agenti se starým kódem se už nepřipojí.")) return;
+    act(async () => {
+      S.agentCode = (await api("POST", "/api/room/rotate")).agent_code;
+      $("#btn-invite").click();
+      toast("Nový kód je aktivní.");
+    });
+  });
+
   // Ask for notification permission on the first interaction (browsers require a gesture).
   document.addEventListener("click", () => {
     if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
@@ -506,23 +541,65 @@ async function sendMessage() {
 
 // ------------------------------------------------------------------ boot
 
+// ------------------------------------------------------------------ landing
+
+function showLanding(error) {
+  $("#landing").hidden = false;
+  $(".topbar").hidden = true;
+  $(".layout").hidden = true;
+  const list = rooms();
+  $("#my-rooms").innerHTML = list.length
+    ? `<h2>Moje místnosti</h2><ul class="room-list">${list.map((r) => `<li><a href="/#o=${esc(r.key)}"><span>${esc(r.name)}</span><span class="muted small">${new Date(r.at).toLocaleDateString("cs")}</span></a></li>`).join("")}</ul>`
+    : "";
+  if (error) toast(error, true);
+  $("#create-form").onsubmit = (e) => {
+    e.preventDefault();
+    const f = e.target;
+    act(async () => {
+      const res = await fetch("/api/rooms", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: f.room.value || undefined, human_name: f.human.value.trim() || undefined }),
+      });
+      const r = await res.json();
+      if (!res.ok) throw new Error(r.message);
+      location.hash = "o=" + r.owner_key;
+      location.reload();
+    });
+  };
+}
+
+async function openRoom(key) {
+  S.key = key;
+  const me = await api("GET", "/api/me");
+  S.me = me.me.name;
+  S.role = me.role;
+  S.agentCode = me.agent_code;
+  rememberRoom(key, me.project.name);
+  $("#landing").hidden = true;
+  $(".topbar").hidden = false;
+  $(".layout").hidden = false;
+  bind();
+  showPane("threads");
+  await loadState();
+  connect();
+  if (window.innerWidth > 860) {
+    const first = S.state.threads.find((t) => t.status === "human_needed") || S.state.threads[0];
+    if (first) await openThread(first.id);
+  }
+  if (!S.state.threads.length) $("#btn-invite").click();
+}
+
 (async function boot() {
+  const m = /[#&]o=([0-9A-Za-z-]+)/.exec(location.hash);
+  if (!m) return showLanding();
   try {
-    const cfgHeaders = S.token ? { authorization: "Bearer " + S.token } : {};
-    const cfg = await (await fetch("/api/config", { headers: cfgHeaders })).json();
-    S.me = cfg.humanName || "Supervizor";
-    S.project = S.project || cfg.defaultProject || "default";
-    bind();
-    showPane("threads");
-    await loadState();
-    connect();
-    const m = /^#T(\d+)$/.exec(location.hash);
-    if (m) await openThread(Number(m[1]));
-    else if (window.innerWidth > 860) {
-      const first = S.state.threads.find((t) => t.status === "human_needed") || S.state.threads[0];
-      if (first) await openThread(first.id);
-    }
+    await openRoom(m[1]);
   } catch (e) {
+    if (e.code === "bad_key") {
+      save("ruch.rooms", JSON.stringify(rooms().filter((r) => r.key !== m[1])));
+      return showLanding("Tahle místnost neexistuje (mohla být smazána po 30 dnech nečinnosti).");
+    }
     toast("Nepodařilo se připojit k hubu: " + e.message, true);
   }
 })();

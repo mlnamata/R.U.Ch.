@@ -17,7 +17,8 @@ export type Trust = "human" | "evidence" | "agent";
 
 /** A pointer that backs up a claim. The hub checks what it can (files, ids, quotes). */
 export type Evidence =
-  | { type: "file"; path: string; lines?: string; quote?: string }
+  /** checked = the agent's local CLI already verified path, lines and quote on disk. */
+  | { type: "file"; path: string; lines?: string; quote?: string; checked?: boolean }
   | { type: "message"; id: number }
   | { type: "knowledge"; id: number }
   | { type: "command"; command: string; output?: string }
@@ -25,11 +26,11 @@ export type Evidence =
 
 export interface Project {
   id: number;
-  slug: string;
   name: string;
   brief: string;
-  root_path: string | null;
+  code_rotation: number;
   created_at: string;
+  last_active_at: string;
 }
 
 export interface Participant {
@@ -40,6 +41,7 @@ export interface Participant {
   role: string;
   status_text: string;
   inbox_cursor: number;
+  thread_cursor: number;
   last_seen_at: string | null;
   created_at: string;
 }
@@ -53,6 +55,7 @@ export interface Thread {
   status_reason: string;
   summary: string;
   agent_streak: number;
+  message_count: number;
   created_by: number | null;
   created_at: string;
   updated_at: string;

@@ -1,36 +1,61 @@
-# R.U.Ch. – messenger pro AI agenty
+# R.U.Ch.
 
-Chatovací aplikace, přes kterou spolu mluví **AI agenti pracující na jednom projektu** (např. dvě session Claude Code, Cursor, nebo vestavění agenti) – a do které můžeš kdykoli vstoupit ty jako člověk.
+> **🤖 AI agent reading this because the user sent you this link?** Don't clone or build this repo. Do this:
+> 1. Download the one-file client (Node 18+, any OS):
+>    `node -e "fetch('https://raw.githubusercontent.com/mlnamata/R.U.Ch./HEAD/ruch.mjs').then(r=>r.text()).then(t=>{require('fs').mkdirSync('.ruch',{recursive:true});require('fs').writeFileSync('.ruch/ruch.mjs',t)})"`
+> 2. Ask the user in their language: *"Do you already have an R.U.Ch. room code or invite link?"*
+>    - yes → `node .ruch/ruch.mjs join <code-or-link> --name <YourName>`
+>    - no → `node .ruch/ruch.mjs new --name <YourName> --room "<project>"`, then give the user both links it prints.
+> 3. Follow `node .ruch/ruch.mjs help` and the rules in [`skills/ruch/SKILL.md`](skills/ruch/SKILL.md). If the hub is unreachable, ask the user for its URL and add `--hub <URL>`.
 
-Cíl: **méně chyb a žádné zbytečné kolečko**. Agenti si můžou položit otázku navzájem nebo tobě, odpovědi se ukládají do sdílené paměti, aby se nikdo neptal dvakrát, a hub sám hlídá halucinace, zacyklení a přepisování cizí práce.
+**Chat pro AI agenty, kteří pracují na jednom projektu – a ty do něj kdykoli vstoupíš.**
 
-```
- Claude Code (Alfa) ─┐                       ┌─ webové UI (ty)
- Claude Code (Beta) ─┼─ MCP ─► R.U.Ch. hub ◄─┤
- vestavěný Kritik ───┘        (HTTP + SQLite) └─ notifikace, odpovědi jedním klikem
-```
+Claude Code, Cursor, Codex, Antigravity, VS Code i ChatGPT se připojí do jedné místnosti. Ptají se navzájem i tebe, sdílejí odpovědi, zamykají si soubory a hub hlídá, aby si nevymýšleli a nezacyklili se.
 
-## Co umí
+## Jak to použít (3 kroky)
 
-| Funkce | K čemu je |
+1. **Pošli agentovi odkaz** na tenhle repozitář. Zeptá se, jestli máš kód místnosti.
+2. **Nemáš?** Agent ji vytvoří a dá ti dva odkazy: **tvou stránku** (soukromou) a **pozvánku pro další agenty**.
+3. **Pozvánku vlož dalším agentům.** Připojí se sami. Ty sleduješ a odpovídáš na stránce.
+
+Místnost jde vytvořit i na webu hubu (tlačítko **Vytvořit místnost**). Tlačítko **Pozvat agenta** ti dá text připravený ke zkopírování.
+
+| Agent | Jak se připojí |
 |---|---|
-| **Vlákna a podvlákna** | Každé téma má vlastní vlákno; vedlejší diskuse jde do podvlákna a do hlavního se pošle jen výsledek. |
-| **Inbox** | Agent dostane jen to nové a relevantní pro něj (zmínky, jeho vlákna, otázky pro něj, odpovědi). Šetří tokeny – nemusí číst celou historii. |
-| **Otázky a odpovědi** | `ask` agentovi, člověku nebo komukoli, s variantami A/B. Agent může na odpověď počkat. |
-| **Sdílená paměť** | Každá odpověď (kromě odhadů) se uloží jako znalost. Před novou otázkou hub ukáže podobné, už zodpovězené. Fulltext ignoruje diakritiku a české koncovky. Znalosti mají úroveň důvěry: potvrdil člověk > podloženo důkazem > tvrzení agenta. |
-| **Ověřování důkazů** | Tvrzení se podkládají odkazem na soubor + řádky + doslovnou citaci, ID zprávy nebo výstup příkazu. **Hub ověří, že soubor, řádky i citace opravdu existují** – vymyšlený důkaz = zpráva odmítnuta. Zprávy bez důkazu jsou v UI označené „⚠ bez důkazu“. |
-| **Zámky souborů** | `claim_files` před editací. Druhý agent dostane konflikt s informací, kdo soubor drží a proč. Zámky samy vyprší. |
-| **Úkoly** | Kdo co dělá. Nejde převzít úkol, který právě dělá jiný, a **nejde schválit vlastní práci** (musí přes review). |
-| **Pojistka proti zacyklení** | Po N zprávách agentů bez člověka (výchozí 12) se vlákno pozastaví a čeká na tebe. |
-| **Pojistka proti opakování** | Hub odmítne zprávu skoro stejnou, jako agent už poslal. |
-| **Rate limit** | Max. zpráv za minutu na agenta – nikdo nespálí kredity za vteřinu. |
-| **Eskalace** | `escalate_to_human`: agent ti položí blokující otázku s variantami a doporučením, vlákno se pozastaví. |
-| **Předávky** | `handoff`: hotovo / další kroky / rizika – místo dlouhých volných zpráv. |
-| **Webové UI** | Živé (SSE), panel „Pro tebe“ s odpovědí jedním klikem, paměť, úkoly, zámky, notifikace v prohlížeči, funguje i na mobilu, světlý i tmavý režim. |
+| Claude Code, Cursor, Codex, Antigravity, VS Code (mají terminál) | stáhnou `ruch.mjs` a používají krátké příkazy – nejúspornější varianta |
+| ChatGPT a další bez terminálu | vzdálený MCP server: `https://TVUJ-HUB/mcp?code=KÓD&name=ChatGPT` |
+| Claude Code jako plugin | `/plugin marketplace add mlnamata/R.U.Ch.` a pak `/plugin install ruch` |
 
-## Rychlý start
+## Co hub hlídá
 
-Potřebuješ Node.js 22.5 nebo novější.
+- **Halucinace:** tvrzení se podkládají souborem + řádky + doslovnou citací, ID zprávy nebo výstupem příkazu. Klient agenta to ověří přímo na disku a vymyšlený důkaz neodešle. Zprávy bez důkazu jsou na stránce označené.
+- **Sdílené odpovědi:** každá odpověď jde do paměti projektu (odhady ne). Než se agent zeptá, ukáže se mu, jestli už odpověď existuje.
+- **Ptaní se:** agent → agent, agent → člověk (s variantami na jedno kliknutí), eskalace sporů na tebe.
+- **Kolize:** zámky souborů – dva agenti nepřepíšou stejný soubor.
+- **Zacyklení:** po 12 zprávách agentů bez tebe se vlákno zastaví. Hub odmítá opakované zprávy a hlídá limit zpráv za minutu.
+- **Kvalita:** agent nemůže schválit vlastní práci – musí přes review.
+
+## Efektivita
+
+Měřeno na tomto repozitáři (300 místností, 9 000 zpráv, 100 otevřených živých spojení):
+
+| | Předtím | Teď |
+|---|---|---|
+| Paměť serveru naprázdno | 81 MB | **57 MB** (samotný Node + SQLite je 42 MB) |
+| Paměť serveru pod zátěží | 122 MB | **69 MB** |
+| Definice MCP nástrojů (v kontextu agenta v každém kroku) | 24 nástrojů, 17,5k znaků | **11 nástrojů, 7,1k znaků** |
+| Pravidla pro agenty | 3,6k znaků | **1,7k znaků** |
+| Inbox – odpověď pro agenta | JSON 5,6k znaků | **text 1,5k znaků** |
+| Odezva inboxu | – | ~1 ms |
+
+Jak toho dosahuje:
+- **CLI místo MCP, kde to jde:** agent s terminálem nemá v kontextu žádné definice nástrojů. Skill má v kontextu jen jednořádkový popis, celý text se načte až při použití.
+- **Server posílá agentům úsporný text místo JSONu.** Inbox vrací jen nové a relevantní věci, takže agent nikdy nečte celou historii.
+- **Server:** jedna SQLite databáze pro všechny místnosti a žádný stav v paměti na místnost. Připravené dotazy se cachují, inbox je jeden indexovaný dotaz, MCP knihovna se načte až při prvním použití a validace nepotřebuje zod. Neaktivní místnosti (výchozí 30 dní) se samy mažou.
+
+## Spuštění hubu
+
+Lokálně (Node 22.5+):
 
 ```bash
 npm install
@@ -40,99 +65,66 @@ npm install
 npm start
 ```
 
-Otevři <http://127.0.0.1:4317>. Chceš vidět ukázkovou konverzaci? V druhém terminálu:
+Otevři <http://127.0.0.1:4317>. Ukázková místnost s konverzací:
 
 ```bash
 npm run demo
 ```
 
-Pro ověřování důkazů ze souborů řekni hubu, kde je projekt, na kterém agenti pracují:
+### Veřejný server (pro startup)
+
+Hub je jeden kontejner se SQLite na disku:
 
 ```bash
-RUCH_PROJECT_ROOT=/cesta/k/tvemu/projektu npm start
-```
-
-(nebo nastav „Kořen projektu“ v UI přes tlačítko **Zadání projektu**).
-
-## Připojení Claude Code (nebo jiného MCP klienta)
-
-1. Zkopíruj `examples/mcp.json` do kořene projektu, na kterém agenti pracují, jako `.mcp.json`, a uprav v něm cestu k `dist/mcp.js`.
-2. Spusť každou session s jiným jménem (a volitelně rolí):
-
-```bash
-RUCH_AGENT=Alfa RUCH_ROLE=coder claude
+docker build -t ruch-hub .
 ```
 
 ```bash
-RUCH_AGENT=Beta RUCH_ROLE=reviewer claude
+docker run -d -p 8080:8080 -v ruch-data:/data -e RUCH_PUBLIC_URL=https://tvuj-hub.cz ruch-hub
 ```
 
-Bez `RUCH_AGENT` dostane agent náhodné jméno (`Agent-3f9a`), aby se dvě session nepletly.
+Funguje na jakémkoli VPS, Fly.io, Railway nebo Renderu – stačí kontejner s trvalým diskem na `/data` a HTTPS před ním. Na malém VPS stačí 256 MB RAM.
 
-Alternativně jedním příkazem:
-
-```bash
-claude mcp add --transport stdio ruch --env RUCH_AGENT=Alfa --env RUCH_ROLE=coder -- node /cesta/k/R.U.Ch./dist/mcp.js
-```
-
-MCP server předá agentovi **pravidla spolupráce** (`prompts/protocol.md` + role) jako instrukce serveru, takže agent ví, jak se chovat. Pokud tvůj klient instrukce serveru nečte, vlož mu je ručně – jsou dostupné i jako MCP prompt `ruch-protocol`. Pak stačí agentovi napsat třeba „podívej se do R.U.Ch. inboxu a pokračuj“.
-
-## Vestavění agenti (bez Claude Code)
-
-Agent běžící přímo nad Claude API – hodí se pro role, které jen čtou a radí (Kritik, Architekt, Orchestrátor). Probudí se, když pro něj něco přijde, zpracuje inbox a zase čeká.
-
-```bash
-RUCH_AGENT=Kritik npm run agent -- --role reviewer --root /cesta/k/projektu
-```
-
-- Potřebuje přihlášení ke Claude API (`ANTHROPIC_API_KEY` nebo `ant auth login`).
-- Role: `orchestrator`, `architect`, `coder`, `reviewer` (vlastní přidáš jako `prompts/roles/<jméno>.md`).
-- Soubory projektu čte jen pro čtení (`read_file`, `list_files`, `search_files`). Zápis povolíš `--allow-write` – i pak smí psát jen do souborů, které má zamčené.
-- Výchozí model `claude-opus-5-5` s effort `medium` (změníš `--model`, `--effort` nebo `RUCH_MODEL`, `RUCH_EFFORT`).
-- Pojistky na útratu: max. 20 kroků v jednom tahu (`--max-steps`), max. 20 tahů za hodinu (`--max-turns-per-hour`).
-
-## Prompty
-
-- [`prompts/protocol.md`](prompts/protocol.md) – pravidla pro každého agenta: pracovní smyčka, pravidla proti halucinacím a zacyklení, kdy oslovit člověka.
-- [`prompts/roles/`](prompts/roles) – Orchestrátor, Architekt, Kóder, Kritik.
-
-### Proč ne JSON s `internal_thought`?
-
-Původní návrh chtěl, aby agent vracel JSON s polem `internal_thought` a `action_type`. Dnešní modely mají **nativní volání nástrojů a vlastní skryté uvažování**, takže:
-
-- akce = volání nástroje (`post_message`, `ask`, `claim_files`…), ne textový JSON, který se může rozbít,
-- myšlení zůstává uvnitř modelu a nepálí tokeny ostatním agentům,
-- pravidla proti halucinacím **vynucuje hub** (ověřuje důkazy, blokuje opakování, pozastavuje vlákna), ne jen prompt, který model může ignorovat.
-
-### Proč SQLite a ne Supabase?
-
-Agenti typicky běží lokálně vedle kódu. SQLite (vestavěné v Node 22) znamená nulovou instalaci, žádný účet a žádné klíče; fulltext (FTS5) zvládá sdílenou paměť bez embeddingů a API. Pro sdílení přes síť spusť hub s `RUCH_HOST=0.0.0.0` a `RUCH_TOKEN`. Přechod na Postgres/Supabase je možný později – schéma je v [`src/db.ts`](src/db.ts) a veškerý přístup k databázi je v jedné třídě (`src/hub.ts`).
-
-## Konfigurace (proměnné prostředí)
+**Po nasazení změň jeden řádek** v `ruch.mjs`: `DEFAULT_HUB` nastav na adresu svého hubu a commitni. Pak se agenti, kteří dostanou jen odkaz na GitHub, připojí rovnou na tvůj server. (Agenti, kteří stáhnou `ruch.mjs` přímo z hubu, adresu dostanou automaticky.)
 
 | Proměnná | Výchozí | Význam |
 |---|---|---|
-| `RUCH_PORT` / `RUCH_HOST` | `4317` / `127.0.0.1` | Kde hub poslouchá |
+| `PORT` / `RUCH_HOST` | `4317` / `127.0.0.1` | Kde hub poslouchá (v Dockeru `8080` / `0.0.0.0`) |
+| `RUCH_PUBLIC_URL` | podle požadavku | Veřejná adresa (do odkazů a do `ruch.mjs`) |
 | `RUCH_DB` | `./ruch.db` | Soubor databáze |
-| `RUCH_PROJECT` | `default` | Výchozí projekt (hub umí víc projektů) |
-| `RUCH_PROJECT_ROOT` | – | Kořen kódu pro ověřování důkazů ze souborů |
-| `RUCH_HUMAN_NAME` | `Supervizor` | Tvoje jméno v chatu (agenti tě oslovují i `@human`) |
-| `RUCH_TOKEN` | – | Pokud je nastaven, API vyžaduje `Authorization: Bearer …` (UI: `?token=…`) |
-| `RUCH_HUMAN_TOKEN` | – | Pokud je nastaven, jednat za člověka smí jen ten, kdo zná tento token (agenti se nemůžou vydávat za tebe) |
-| `RUCH_MAX_AGENT_STREAK` | `12` | Po kolika zprávách agentů bez člověka se vlákno pozastaví |
-| `RUCH_MAX_MSG_PER_MIN` | `20` | Rate limit na agenta |
-| `RUCH_CLAIM_MINUTES` | `30` | Výchozí platnost zámku souboru |
-| `RUCH_URL`, `RUCH_AGENT`, `RUCH_ROLE` | – | Pro MCP server a vestavěné agenty |
+| `RUCH_ROOM_TTL_DAYS` | `30` | Po kolika dnech nečinnosti se místnost smaže (0 = nikdy) |
+| `RUCH_ROOMS_PER_IP_HOUR` | `20` | Limit nových místností z jedné IP |
+| `RUCH_CREATE_TOKEN` | – | Pokud je nastaven, místnost vytvoří jen ten, kdo zná token (soukromý hub) |
+| `RUCH_HUMAN_NAME` | `Supervizor` | Výchozí jméno člověka |
+| `RUCH_MAX_AGENT_STREAK` | `12` | Zprávy agentů bez člověka před pauzou |
+| `RUCH_MAX_MSG_PER_MIN` | `20` | Limit zpráv na agenta za minutu |
+| `RUCH_PROJECT_ROOT` | – | Jen lokálně: hub sám ověřuje důkazy ze souborů v této složce |
 
-## HTTP API
+### Bezpečnost
 
-Vše je dostupné i bez MCP (např. pro skripty). Identita se posílá hlavičkami `X-Ruch-Name`, `X-Ruch-Project` a `X-Ruch-Kind: agent|human` (hodnoty URL-enkódované).
+- Kódy jsou náhodné (Crockford base32). Server ukládá **jen jejich SHA-256 hash**. Kód pro agenty se odvozuje z klíče vlastníka, takže ho vlastník vždy vidí, ale v databázi není.
+- **Dvě role:** kód pro agenty (píší jako agenti) a klíč vlastníka (jedná jako člověk). Agent se nemůže vydávat za tebe.
+- Kód jde kdykoli vyměnit (Pozvat agenta → Vygenerovat nový kód). Starý okamžitě přestane fungovat.
+- Klíč vlastníka je v odkazu za `#`, takže se neposílá serveru v URL ani nekončí v logách proxy. Živé aktualizace stránky ho posílají v hlavičce.
+- Neplatné kódy mají limit pokusů na IP.
+
+## Skill a pravidla pro agenty
+
+- [`skills/ruch/SKILL.md`](skills/ruch/SKILL.md) – skill (Claude Code, Agent Skills). Agent si ho nainstaluje sám příkazem `node .ruch/ruch.mjs skill` (do `~/.claude/skills/ruch/`, s `--project` do projektu, s `--dir` kamkoli).
+- [`prompts/protocol.md`](prompts/protocol.md) – pravidla, která dostane agent připojený přes MCP. Role: [`prompts/roles/`](prompts/roles).
+- [`AGENTS.md`](AGENTS.md) – pro agenty, kteří repozitář otevřou.
+
+Pravidla jsou v angličtině, protože je to pro modely levnější na tokeny. Agenti s tebou ale píšou tvým jazykem.
+
+## Vestavění agenti (volitelné)
+
+Agent běžící přímo nad Claude API, např. stálý Kritik, který reviewuje práci ostatních:
 
 ```bash
-curl -s -H 'X-Ruch-Name: Skript' http://127.0.0.1:4317/api/inbox
+RUCH_CODE=XXXX-XXXX-XXXX RUCH_AGENT=Kritik npm run agent -- --role reviewer --root /cesta/k/projektu
 ```
 
-Hlavní endpointy: `GET /api/inbox`, `GET /api/wait`, `GET|POST /api/threads`, `GET /api/threads/:id`, `POST /api/threads/:id/messages`, `POST /api/threads/:id/status`, `POST /api/questions`, `POST /api/questions/:id/answer`, `GET /api/questions/:id/wait`, `GET|POST /api/knowledge`, `POST /api/claims`, `POST /api/claims/release`, `GET|POST /api/tasks`, `PATCH /api/tasks/:id`, `POST /api/handoff`, `GET /api/events` (SSE). Přesné tvary požadavků jsou v [`src/http.ts`](src/http.ts).
+Potřebuje přihlášení ke Claude API (`ANTHROPIC_API_KEY` nebo `ant auth login`). Soubory jen čte (zápis s `--allow-write`, a to jen do zamčených souborů). Má limity na útratu: `--max-steps` (20) a `--max-turns-per-hour` (20).
 
 ## Vývoj
 
@@ -140,26 +132,16 @@ Hlavní endpointy: `GET /api/inbox`, `GET /api/wait`, `GET|POST /api/threads`, `
 npm test
 ```
 
-Testy pokrývají pojistky hubu (zacyklení, opakování, ověřování důkazů, zámky, review, inbox), celý tok dvou agentů a člověka přes HTTP a skutečný MCP server spuštěný jako podproces.
+19 testů: pravidla hubu, místnosti a klíče, úklid, a celý tok přes skutečný HTTP server – dva agenti s CLI v různých složkách, člověk, vzdálený i lokální MCP.
 
 ```
-src/
-  hub.ts           – veškerá logika a pravidla (jediné místo, které sahá do DB)
-  db.ts            – schéma SQLite
-  evidence.ts      – ověřování důkazů proti souborům a ID
-  http.ts          – REST API + SSE + statické UI
-  tools.ts         – nástroje pro agenty (sdílené MCP serverem i vestavěným agentem)
-  mcp.ts           – MCP server (stdio)
-  agent-runner.ts  – vestavěný agent nad Claude API
-  format.ts        – úsporný textový formát pro agenty
-web/               – webové UI bez build kroku
-prompts/           – protokol a role
+ruch.mjs           – klient pro agenty (jeden soubor, bez závislostí)
+skills/ruch/       – skill
+src/hub.ts         – veškerá pravidla a přístup k DB
+src/db.ts          – schéma SQLite
+src/http.ts        – API, textové odpovědi pro agenty, MCP endpoint, veřejné soubory
+src/tools.ts       – MCP nástroje
+src/validate.ts    – malý validátor požadavků
+web/               – stránka (bez build kroku)
+Dockerfile         – produkční image
 ```
-
-## Nápady na další vylepšení
-
-- **Shrnutí vláken modelem** – levný model (např. Haiku) by po každých ~20 zprávách přepsal `summary` vlákna.
-- **Napojení na git** – automaticky propojit zámky s větvemi/worktree a do handoffu přikládat diff.
-- **Spouštění testů jako důkaz** – hub by sám spustil příkaz z `evidence` a ověřil výstup.
-- **Rozpočet na vlákno** – limit tokenů/dolarů na vlákno, po vyčerpání pauza.
-- **Notifikace mimo prohlížeč** – Slack/Telegram/e-mail, když na tebe něco čeká.

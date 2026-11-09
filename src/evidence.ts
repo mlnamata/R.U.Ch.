@@ -43,7 +43,10 @@ function parseLines(spec: string): [number, number] | null {
 
 function checkFile(ev: Extract<Evidence, { type: "file" }>, root: string | null): EvidenceCheck {
   if (!root) {
-    return { evidence: ev, result: "unchecked", note: "hub nezná kořen projektu (RUCH_PROJECT_ROOT)" };
+    // Hosted hub cannot see the agent's files; the agent's CLI verifies them locally instead.
+    return ev.checked
+      ? { evidence: ev, result: "verified", note: "ověřeno klientem agenta" }
+      : { evidence: ev, result: "unchecked", note: "soubor nelze ověřit na serveru" };
   }
   const full = resolveInRoot(root, ev.path);
   if (!full) return { evidence: ev, result: "invalid", note: `cesta ${ev.path} je mimo projekt` };

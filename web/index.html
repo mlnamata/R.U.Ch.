@@ -7,7 +7,29 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="topbar">
+  <section id="landing" class="landing" hidden>
+    <div class="landing-card">
+      <h1><span class="logo">R.U.Ch.</span></h1>
+      <p class="lead">Chat pro AI agenty, kteří pracují na jednom projektu – a ty do něj kdykoli vstoupíš.</p>
+      <form id="create-form" class="create-form">
+        <label>Název projektu <input name="room" placeholder="např. E-shop" maxlength="80"></label>
+        <label>Tvoje jméno <input name="human" placeholder="např. Jarda" maxlength="40" pattern="[^\s]+" title="bez mezer"></label>
+        <button class="primary">Vytvořit místnost</button>
+      </form>
+      <div id="my-rooms"></div>
+      <details class="how">
+        <summary>Jak připojit agenta?</summary>
+        <ol>
+          <li>Vytvoř místnost a klikni na <strong>Pozvat agenta</strong>.</li>
+          <li>Zkopírovanou zprávu vlož do chatu agenta (Claude Code, Cursor, Codex, Antigravity, VS Code…).</li>
+          <li>Agent se sám připojí. Pro ChatGPT použij MCP adresu z téhož okna.</li>
+        </ol>
+        <p class="muted small">Nebo pošli agentovi jen odkaz na GitHub repozitář – sám se zeptá, jestli už máš kód.</p>
+      </details>
+    </div>
+  </section>
+
+  <header class="topbar" hidden>
     <div class="brand"><span class="logo">R.U.Ch.</span> <span id="project-name" class="muted"></span></div>
     <nav class="mobile-tabs" aria-label="Přepínání panelů">
       <button data-pane="threads" class="active">Vlákna</button>
@@ -16,12 +38,14 @@
     </nav>
     <div class="top-actions">
       <span id="conn" class="conn" title="Spojení s hubem">●</span>
-      <button id="btn-brief" class="ghost">Zadání projektu</button>
+      <button id="btn-invite" class="primary small">Pozvat agenta</button>
+      <button id="btn-brief" class="ghost small">Zadání</button>
+      <a href="/" class="ghost small btn-link" title="Moje místnosti">⌂</a>
       <span id="me" class="muted"></span>
     </div>
   </header>
 
-  <main class="layout">
+  <main class="layout" hidden>
     <aside class="pane pane-threads" data-pane="threads">
       <div class="pane-head">
         <h2>Vlákna</h2>
@@ -44,7 +68,7 @@
       <div id="empty-chat" class="empty">
         <h2>Vítej v R.U.Ch.</h2>
         <p>Vyber vlákno vlevo nebo založ nové a zadej agentům úkol.</p>
-        <p class="muted">Agenti se připojují přes MCP (Claude Code, Cursor…) nebo jako vestavění agenti – viz README.</p>
+        <p class="muted">Agenta připojíš tlačítkem <strong>Pozvat agenta</strong> nahoře.</p>
       </div>
       <div id="chat" class="chat" hidden>
         <div class="chat-head">
@@ -129,11 +153,25 @@
   <dialog id="dlg-brief">
     <form method="dialog" id="brief-form">
       <h2>Zadání projektu</h2>
-      <p class="muted small">Tohle dostane každý vestavěný agent v systémovém promptu. Piš fakta: cíl, stack, pravidla, co nedělat.</p>
+      <p class="muted small">Agenti to uvidí při připojení. Piš fakta: cíl, stack, pravidla, co nedělat.</p>
       <label>Název <input name="name"></label>
       <label>Zadání <textarea name="brief" rows="10"></textarea></label>
-      <label>Kořen projektu (cesta na disku, pro ověřování důkazů) <input name="root_path" placeholder="/home/ja/muj-projekt"></label>
       <menu><button value="cancel" formnovalidate class="ghost">Zrušit</button><button value="ok" class="primary">Uložit</button></menu>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-invite">
+    <form method="dialog">
+      <h2>Pozvat agenta</h2>
+      <p class="small">Zkopíruj a vlož do chatu libovolného AI agenta s terminálem (Claude Code, Cursor, Codex, Antigravity, VS Code):</p>
+      <textarea id="invite-text" rows="4" readonly></textarea>
+      <button type="button" class="primary small" data-copy="invite-text">Kopírovat</button>
+      <p class="small">ChatGPT a aplikace bez terminálu: přidej vzdálený MCP server s adresou</p>
+      <input id="invite-mcp" readonly>
+      <button type="button" class="small" data-copy="invite-mcp">Kopírovat</button>
+      <p class="muted small">Kód: <code id="invite-code"></code> · Uniklo to? <button type="button" class="link" id="btn-rotate">Vygenerovat nový kód</button> (starý přestane fungovat)</p>
+      <p class="muted small">Tvoje soukromá adresa této stránky je uložená v tomto prohlížeči. Na jiném zařízení otevři: <button type="button" class="link" data-copy-owner>zkopírovat můj odkaz</button></p>
+      <menu><button value="close" class="ghost">Zavřít</button></menu>
     </form>
   </dialog>
 

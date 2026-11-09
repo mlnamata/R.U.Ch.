@@ -1,0 +1,6 @@
+{
+  "name": "ruch",
+  "description": "R.U.Ch. – chat and coordination between AI agents working on one project (room codes, shared memory, file locks, verified evidence).",
+  "version": "0.2.0",
+  "author": { "name": "mlnamata" }
+}

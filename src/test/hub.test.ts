@@ -6,13 +6,14 @@ import { join } from "node:path";
 import { openDatabase } from "../db.js";
 import { DEFAULT_CONFIG, Hub, HubError } from "../hub.js";
 
-function setup(overrides: Partial<typeof DEFAULT_CONFIG> = {}, root: string | null = null) {
+function setup(overrides: Partial<typeof DEFAULT_CONFIG> = {}) {
   const hub = new Hub(openDatabase(":memory:"), { ...DEFAULT_CONFIG, ...overrides });
-  hub.ensureProject("p", { root_path: root });
-  const human = hub.join("p", DEFAULT_CONFIG.humanName, "human");
-  const a = hub.join("p", "Alfa", "agent", "coder");
-  const b = hub.join("p", "Beta", "agent", "reviewer");
-  return { hub, human, a, b };
+  const room = hub.createRoom({ name: "Test" });
+  const pid = room.project.id;
+  const human = room.human;
+  const a = hub.join(pid, "Alfa", "agent", "coder");
+  const b = hub.join(pid, "Beta", "agent", "reviewer");
+  return { hub, human, a, b, pid, room };
 }
 
 function rejects(fn: () => unknown, code: string) {
@@ -56,7 +57,7 @@ test("evidence is verified against real files, hallucinated evidence is rejected
   const root = mkdtempSync(join(tmpdir(), "ruch-"));
   mkdirSync(join(root, "src"));
   writeFileSync(join(root, "src", "auth.ts"), "export function login() {\n  const token = sign(user);\n  return token;\n}\n");
-  const { hub, a } = setup({}, root);
+  const { hub, a } = setup({ projectRoot: root });
   const { thread } = hub.createThread(a, { title: "Review" });
 
   const ok = hub.post(a, thread.id, {
@@ -183,9 +184,35 @@ test("rate limit stops an agent from flooding", () => {
 });
 
 test("participant names are validated and kinds cannot be hijacked", () => {
-  const { hub } = setup();
-  rejects(() => hub.join("p", "human", "agent"), "reserved_name");
-  rejects(() => hub.join("p", "dva slova", "agent"), "bad_name");
-  hub.join("p", "Jarda", "human");
-  rejects(() => hub.join("p", "Jarda", "agent"), "name_taken");
+  const { hub, pid } = setup();
+  rejects(() => hub.join(pid, "human", "agent"), "reserved_name");
+  rejects(() => hub.join(pid, "dva slova", "agent"), "bad_name");
+  hub.join(pid, "Jarda", "human");
+  rejects(() => hub.join(pid, "Jarda", "agent"), "name_taken");
+});
+
+test("rooms: codes are case/format tolerant, owner and agent roles differ, rotation revokes", () => {
+  const { hub, room, human } = setup();
+  assert.match(room.agentCode, /^[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$/);
+  assert.equal(hub.authenticate(room.agentCode.toLowerCase().replace(/-/g, " "))?.role, "agent");
+  assert.equal(hub.authenticate(room.ownerKey)?.role, "owner");
+  assert.equal(hub.authenticate("AAAA-BBBB-CCCC"), null);
+  assert.equal(hub.agentCodeFor(room.ownerKey, room.project), room.agentCode);
+  const fresh = hub.rotateAgentCode(human, room.ownerKey);
+  assert.notEqual(fresh, room.agentCode);
+  assert.equal(hub.authenticate(room.agentCode), null);
+  assert.equal(hub.authenticate(fresh)?.project.id, room.project.id);
+  // rooms are isolated
+  const other = hub.createRoom();
+  const x = hub.join(other.project.id, "Alfa", "agent");
+  rejects(() => hub.getThread(other.project.id, hub.createThread(human, { title: "tajné" }).thread.id), "thread_not_found");
+  assert.equal(hub.inbox(x).messages.length, 0);
+});
+
+test("cleanup deletes inactive rooms with all their data", () => {
+  const { hub, a, pid } = setup({ roomTtlDays: 1 });
+  hub.createThread(a, { title: "x", body: "zpráva" });
+  (hub as any).db.prepare("UPDATE projects SET last_active_at = '2000-01-01T00:00:00Z' WHERE id = ?").run(pid);
+  assert.equal(hub.cleanup().roomsDeleted, 1);
+  assert.equal((hub as any).db.prepare("SELECT COUNT(*) AS c FROM messages").get().c, 0);
 });

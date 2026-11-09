@@ -165,7 +165,7 @@ dialog menu { display: flex; justify-content: flex-end; gap: 8px; margin: 0; pad
 }
 @media (max-width: 860px) {
   .mobile-tabs { display: flex; }
-  .top-actions #me, .brand #project-name { display: none; }
+  .top-actions #me, .brand #project-name, #btn-brief { display: none; }
   .topbar { padding: 8px 12px; gap: 8px; flex-wrap: wrap; }
   .layout { grid-template-columns: 1fr; }
   .pane { display: none; border: 0 !important; }
@@ -174,3 +174,18 @@ dialog menu { display: flex; justify-content: flex-end; gap: 8px; margin: 0; pad
   .messages { padding: 10px 12px; }
   .composer, .chat-head { padding-left: 12px; padding-right: 12px; }
 }
+
+.landing { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+.landing-card { width: min(520px, 100%); display: flex; flex-direction: column; gap: 16px; }
+.landing h1 { margin: 0; font-size: 2.2rem; }
+.lead { margin: 0; font-size: 1.05rem; }
+.create-form { display: flex; flex-direction: column; gap: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+.create-form label { display: flex; flex-direction: column; gap: 4px; font-size: 0.88rem; }
+.how summary { cursor: pointer; }
+.how ol { padding-left: 20px; line-height: 1.6; }
+.room-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.room-list a { display: flex; justify-content: space-between; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); text-decoration: none; }
+.room-list a:hover { border-color: var(--accent); }
+.btn-link { text-decoration: none; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 3px 9px; }
+#dlg-invite textarea, #dlg-invite input { font-family: ui-monospace, monospace; font-size: 0.82rem; }
+dialog form > button { align-self: flex-start; }

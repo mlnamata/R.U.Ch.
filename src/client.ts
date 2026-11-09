@@ -1,4 +1,4 @@
-/** Small HTTP client for the hub API, used by the MCP server and the built-in agent runner. */
+/** Small HTTP client for the hub API (MCP servers and the built-in agent runner). */
 export class RuchApiError extends Error {
   constructor(
     public status: number,
@@ -11,11 +11,19 @@ export class RuchApiError extends Error {
 
 export interface ClientOptions {
   url: string;
-  project: string;
+  /** Room key: the agent code (agents) or the owner key (the human). */
+  key: string;
   name: string;
-  kind?: "agent" | "human";
-  token?: string | null;
-  humanToken?: string | null;
+}
+
+/** Accepts a bare code ("7KQ2-X9MD-4TPA") or an invite link ("https://hub/j/7KQ2-X9MD-4TPA"). */
+export function parseInvite(input: string, defaultHub: string): { url: string; key: string } {
+  const s = input.trim();
+  const m = /^(https?:\/\/[^\s#?]+?)\/(?:j|join)\/([0-9A-Za-z-]+)\/?$/.exec(s);
+  if (m) return { url: m[1], key: m[2] };
+  const o = /^(https?:\/\/[^\s#?]+?)\/?#(?:o|k)=([0-9A-Za-z-]+)$/.exec(s);
+  if (o) return { url: o[1], key: o[2] };
+  return { url: defaultHub.replace(/\/$/, ""), key: s };
 }
 
 export class RuchClient {
@@ -24,47 +32,41 @@ export class RuchClient {
   static fromEnv(env = process.env, overrides: Partial<ClientOptions> = {}): RuchClient {
     const name = overrides.name ?? env.RUCH_AGENT ?? env.RUCH_NAME;
     if (!name) throw new Error("Nastav jméno agenta v proměnné RUCH_AGENT (např. RUCH_AGENT=Alfa).");
-    return new RuchClient({
-      url: (overrides.url ?? env.RUCH_URL ?? "http://127.0.0.1:4317").replace(/\/$/, ""),
-      project: overrides.project ?? env.RUCH_PROJECT ?? "default",
-      name,
-      kind: overrides.kind ?? "agent",
-      token: overrides.token ?? env.RUCH_TOKEN ?? null,
-      humanToken: overrides.humanToken ?? env.RUCH_HUMAN_TOKEN ?? null,
-    });
+    const code = overrides.key ?? env.RUCH_CODE;
+    if (!code) throw new Error("Nastav kód místnosti v proměnné RUCH_CODE (vytvoříš ho na webu hubu nebo `node ruch.mjs new`).");
+    const inv = parseInvite(code, overrides.url ?? env.RUCH_URL ?? env.RUCH_HUB ?? "http://127.0.0.1:4317");
+    return new RuchClient({ url: inv.url, key: inv.key, name });
   }
 
-  async request<T = unknown>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+  async request<T = unknown>(method: string, path: string, body?: unknown, opts: { text?: boolean; signal?: AbortSignal } = {}): Promise<T> {
     const headers: Record<string, string> = {
-      "x-ruch-project": encodeURIComponent(this.opts.project),
+      authorization: `Bearer ${this.opts.key}`,
       "x-ruch-name": encodeURIComponent(this.opts.name),
-      "x-ruch-kind": this.opts.kind ?? "agent",
     };
+    if (opts.text) headers.accept = "text/plain";
     if (body !== undefined) headers["content-type"] = "application/json";
-    if (this.opts.token) headers.authorization = `Bearer ${this.opts.token}`;
-    if (this.opts.humanToken) headers["x-ruch-human-token"] = this.opts.humanToken;
     let res: Response;
     try {
-      res = await fetch(this.opts.url + path, {
-        method,
-        headers,
-        body: body === undefined ? undefined : JSON.stringify(body),
-        signal,
-      });
+      res = await fetch(this.opts.url + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: opts.signal });
     } catch (e) {
-      throw new RuchApiError(
-        0,
-        "hub_unreachable",
-        `Hub R.U.Ch. na ${this.opts.url} neodpovídá (${(e as Error).message}). Je spuštěný příkazem "npm start"?`,
-      );
+      throw new RuchApiError(0, "hub_unreachable", `Hub R.U.Ch. na ${this.opts.url} neodpovídá (${(e as Error).message}).`);
     }
-    const text = await res.text();
-    const data = text ? JSON.parse(text) : null;
-    if (!res.ok) throw new RuchApiError(res.status, data?.error ?? "error", data?.message ?? `HTTP ${res.status}`);
-    return data as T;
+    const raw = await res.text();
+    if (!res.ok) {
+      let data: { error?: string; message?: string } = {};
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        data = { message: raw };
+      }
+      throw new RuchApiError(res.status, data.error ?? "error", data.message ?? `HTTP ${res.status}`);
+    }
+    return (opts.text ? raw : raw ? JSON.parse(raw) : null) as T;
   }
 
-  get = <T = unknown>(path: string, signal?: AbortSignal) => this.request<T>("GET", path, undefined, signal);
+  get = <T = unknown>(path: string) => this.request<T>("GET", path);
   post = <T = unknown>(path: string, body: unknown = {}) => this.request<T>("POST", path, body);
   patch = <T = unknown>(path: string, body: unknown = {}) => this.request<T>("PATCH", path, body);
+  /** Same endpoints, but the hub renders compact text for agents (saves tokens). */
+  text = (method: string, path: string, body?: unknown) => this.request<string>(method, path, body, { text: true });
 }

@@ -18,7 +18,7 @@ import { inboxText, type InboxView } from "./format.js";
 import { normalizePath } from "./hub.js";
 import { loadProtocol, loadRole, ROLES } from "./prompts.js";
 import { TOOLS, runTool } from "./tools.js";
-import type { Claim, Project } from "./types.js";
+import type { Claim } from "./types.js";
 
 const { values: args } = parseArgs({
   options: {
@@ -173,16 +173,15 @@ async function execute(name: string, input: unknown): Promise<{ text: string; is
 // ------------------------------------------------------------------ one working turn
 
 async function systemPrompt(): Promise<string> {
-  const { project } = await ruch.get<{ project: Project }>("/api/me");
+  const { project } = await ruch.get<{ project: { name: string; brief: string } }>("/api/me");
   return [
-    `Jsi agent "${ruch.opts.name}" v projektu "${project.name}".`,
-    project.brief ? `## Zadání projektu\n${project.brief}` : "",
-    loadProtocol(),
-    roleText!,
+    `You are agent "${ruch.opts.name}" in project "${project.name}".`,
+    project.brief ? `## Project brief\n${project.brief}` : "",
+    loadProtocol(role),
     root
-      ? "Máš přístup k souborům projektu přes read_file / list_files / search_files. Cesty v evidence piš relativně ke kořeni projektu."
-      : "K souborům projektu nemáš přístup – tvrzení o kódu si nech potvrdit od agenta, který ho vidí.",
-    "Když v inboxu není nic, co by se týkalo tvé role, nic nepiš a skonči.",
+      ? "You can read project files with read_file / list_files / search_files. Evidence paths are relative to the project root."
+      : "You cannot see project files; have claims about code confirmed by an agent who can.",
+    "If nothing in the inbox concerns your role, post nothing and stop.",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -233,7 +232,7 @@ async function workTurn(inbox: string) {
     messages.push({ role: "user", content: results });
   }
   log(`Dosažen limit ${maxSteps} kroků v jednom tahu.`);
-  await runTool(ruch, "set_status", { text: `zastaven limitem ${maxSteps} kroků – potřebuju nasměrovat` });
+  await runTool(ruch, "status", { text: `zastaven limitem ${maxSteps} kroků – potřebuju nasměrovat` });
 }
 
 // ------------------------------------------------------------------ main loop
@@ -242,7 +241,7 @@ const turns: number[] = [];
 
 async function main() {
   await ruch.post("/api/join", { role });
-  await runTool(ruch, "set_status", { text: `online (${role})` });
+  await runTool(ruch, "status", { text: `online (${role})` });
   log(`Připojen(a) k ${ruch.opts.url}, role ${role}, model ${args.model}${root ? `, kořen ${root}` : ""}`);
 
   for (;;) {
@@ -254,7 +253,7 @@ async function main() {
       while (turns.length && turns[0] < hourAgo) turns.shift();
       if (turns.length >= maxTurnsPerHour) {
         log(`Limit ${maxTurnsPerHour} tahů za hodinu – čekám (šetří API kredity).`);
-        await runTool(ruch, "set_status", { text: "pauza – hodinový limit tahů" });
+        await runTool(ruch, "status", { text: "pauza – hodinový limit tahů" });
         await new Promise((r) => setTimeout(r, 5 * 60_000));
         continue;
       }
@@ -279,7 +278,7 @@ async function main() {
       log("Nic k práci.");
       return;
     }
-    await ruch.get("/api/wait?timeout=120");
+    await ruch.text("GET", "/api/inbox?wait=120&peek=1");
   }
 }
 
