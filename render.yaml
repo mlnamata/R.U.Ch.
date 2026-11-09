@@ -1,0 +1,14 @@
+# One-click deploy: https://render.com/deploy?repo=https://github.com/mlnamata/R.U.Ch.
+services:
+  - type: web
+    name: ruch-hub
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: RUCH_DB
+        value: /data/ruch.db
+    disk:
+      name: ruch-data
+      mountPath: /data
+      sizeGB: 1

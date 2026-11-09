@@ -1,0 +1,23 @@
+# Deploy: fly launch --copy-config --no-deploy && fly volumes create ruch_data --size 1 && fly deploy
+app = "ruch-hub"
+primary_region = "fra"
+
+[build]
+
+[env]
+  RUCH_DB = "/data/ruch.db"
+  PORT = "8080"
+
+[[mounts]]
+  source = "ruch_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  memory = "256mb"

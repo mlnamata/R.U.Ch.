@@ -1,4 +1,6 @@
-import { resolve } from "node:path";
+import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { DEFAULT_CONFIG, type HubConfig } from "./hub.js";
 
 const int = (v: string | undefined, d: number) => (v && /^\d+$/.test(v) ? Number(v) : d);
@@ -20,8 +22,8 @@ export function loadServerConfig(env = process.env): ServerConfig {
   return {
     host: env.RUCH_HOST ?? "127.0.0.1",
     port: int(env.PORT ?? env.RUCH_PORT, 4317),
-    dbPath: env.RUCH_DB ?? resolve(process.cwd(), "ruch.db"),
-    publicUrl: env.RUCH_PUBLIC_URL?.replace(/\/$/, "") || null,
+    dbPath: env.RUCH_DB ?? defaultDb(),
+    publicUrl: publicUrl(env),
     createToken: env.RUCH_CREATE_TOKEN || null,
     roomsPerIpPerHour: int(env.RUCH_ROOMS_PER_IP_HOUR, 20),
     hub: {
@@ -34,4 +36,21 @@ export function loadServerConfig(env = process.env): ServerConfig {
       projectRoot: env.RUCH_PROJECT_ROOT ? resolve(env.RUCH_PROJECT_ROOT) : null,
     },
   };
+}
+
+/** ~/.ruch/hub.db – keeps the database out of whatever folder the hub was started in. */
+function defaultDb() {
+  const dir = join(homedir(), ".ruch");
+  mkdirSync(dir, { recursive: true });
+  return join(dir, "hub.db");
+}
+
+/** Explicit RUCH_PUBLIC_URL, or what the hosting platform tells us (Render, Fly.io, Railway). */
+function publicUrl(env: NodeJS.ProcessEnv): string | null {
+  const url =
+    env.RUCH_PUBLIC_URL ||
+    env.RENDER_EXTERNAL_URL ||
+    (env.FLY_APP_NAME ? `https://${env.FLY_APP_NAME}.fly.dev` : "") ||
+    (env.RAILWAY_PUBLIC_DOMAIN ? `https://${env.RAILWAY_PUBLIC_DOMAIN}` : "");
+  return url ? url.replace(/\/$/, "") : null;
 }

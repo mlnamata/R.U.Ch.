@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // R.U.Ch. CLI – connects an AI agent to an R.U.Ch. room. Single file, no dependencies, Node 18+.
 // Get it:  node -e "fetch('HUB/ruch.mjs').then(r=>r.text()).then(t=>{require('fs').mkdirSync('.ruch',{recursive:true});require('fs').writeFileSync('.ruch/ruch.mjs',t)})"
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, statSync, openSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
+const LOCAL_HUB = "http://127.0.0.1:4317";
 const DEFAULT_HUB = process.env.RUCH_HUB || "http://127.0.0.1:4317"; // the hub replaces this when it serves the file
 const REPO_RAW = "https://raw.githubusercontent.com/mlnamata/R.U.Ch./HEAD";
 const DIR = resolve(process.env.RUCH_DIR || ".ruch");
@@ -100,6 +102,55 @@ function parseInvite(input, hub) {
   return { hub, key: s };
 }
 
+// ---------------------------------------------------------------- hub discovery
+
+const up = async (hub) => {
+  try {
+    return (await fetch(`${hub}/api/health`, { signal: AbortSignal.timeout(3000) })).ok;
+  } catch {
+    return false;
+  }
+};
+
+/** --hub > RUCH_HUB > address baked in by the hub > public hub listed in the repo's HUB file > local hub. */
+async function resolveHub() {
+  if (flags.hub && flags.hub !== true) return String(flags.hub).replace(/\/$/, "");
+  if (DEFAULT_HUB !== LOCAL_HUB) return DEFAULT_HUB.replace(/\/$/, "");
+  try {
+    const r = await fetch(`${REPO_RAW}/HUB`, { signal: AbortSignal.timeout(4000) });
+    const line = r.ok ? (await r.text()).split("\n").map((l) => l.trim()).find((l) => /^https?:\/\//.test(l)) : null;
+    if (line && (await up(line))) return line.replace(/\/$/, "");
+  } catch {}
+  return LOCAL_HUB;
+}
+
+/** Start a hub on this computer in the background (npx straight from GitHub) and wait until it answers. */
+async function ensureLocalHub() {
+  if (await up(LOCAL_HUB)) return;
+  process.stderr.write("Spouštím lokální hub na pozadí (poprvé to může trvat ~1 min)…\n");
+  const home = join(homedir(), ".ruch");
+  mkdirSync(home, { recursive: true });
+  const log = openSync(join(home, "hub.log"), "a");
+  const child = spawn("npx", ["-y", "github:mlnamata/R.U.Ch."], {
+    detached: true,
+    stdio: ["ignore", log, log],
+    shell: process.platform === "win32",
+    env: { ...process.env, RUCH_PORT: "4317" },
+  });
+  child.unref();
+  for (let i = 0; i < 90; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    if (await up(LOCAL_HUB)) return;
+  }
+  die(`Lokální hub se nespustil (log: ${join(home, "hub.log")}). Potřebuje Node 22.13+. Nebo se zeptej člověka na adresu hubu a použij --hub <URL>.`);
+}
+
+async function pickHub() {
+  const hub = await resolveHub();
+  if (hub === LOCAL_HUB && !flags["no-start"]) await ensureLocalHub();
+  return hub;
+}
+
 // ---------------------------------------------------------------- evidence (verified locally – the hosted hub can't see your files)
 
 const squash = (s) => s.replace(/\s+/g, " ").trim();
@@ -139,7 +190,7 @@ function checkFile(ev) {
 // ---------------------------------------------------------------- commands
 
 const HELP = `R.U.Ch. – chat pro AI agenty. Příkazy (T=vlákno M=zpráva Q=otázka K=paměť):
-  new --name N [--room "Projekt"] [--hub URL] [--role R]   vytvoří místnost
+  new --name N [--room "Projekt"] [--hub URL] [--role R]   vytvoří místnost (bez hubu spustí lokální)
   join <kód|odkaz> --name N [--role R]                       připojí se
   in [--wait 120]            co je pro tebe nového (vždy první)
   say T "text" [--kind decision|review|status] [--reply M] [--conf certain|likely|guess] [--ev ...]
@@ -170,8 +221,8 @@ switch (cmd) {
     break;
 
   case "new": {
-    const hub = String(flags.hub || DEFAULT_HUB).replace(/\/$/, "");
     const n = name();
+    const hub = await pickHub();
     let res;
     try {
       res = await fetch(`${hub}/api/rooms`, {
@@ -180,11 +231,7 @@ switch (cmd) {
         body: JSON.stringify({ name: flags.room === true ? undefined : flags.room, token: flags.token }),
       });
     } catch {
-      die(
-        `Hub ${hub} neběží. Možnosti:\n` +
-          `  a) zeptej se člověka na adresu hubu a spusť znovu s --hub <URL>\n` +
-          `  b) spusť lokální hub: git clone https://github.com/mlnamata/R.U.Ch. ruch-hub && cd ruch-hub && npm install && npm start`,
-      );
+      die(`Hub ${hub} neodpovídá. Zeptej se člověka na adresu hubu a spusť znovu s --hub <URL>.`);
     }
     const r = await res.json();
     if (!res.ok) die(`CHYBA: ${r.message}`);
@@ -197,7 +244,7 @@ switch (cmd) {
 ŘEKNI ČLOVĚKOVI (jeho jazykem):
   1) Tvoje stránka (soukromá, neposílej dál): ${r.owner_url}
   2) Další agenty připojíš tak, že jim pošleš: "Připoj se do R.U.Ch.: ${r.invite_url}"
-     (nebo kód ${r.agent_code})${note}
+     (nebo kód ${r.agent_code})${note}${hub === LOCAL_HUB ? "\nPozor: hub běží jen na tomto počítači – agenti jinde (cloud, ChatGPT) se nepřipojí." : ""}
 Pak pracuj: ${SELF} in`);
     break;
   }
@@ -205,7 +252,7 @@ Pak pracuj: ${SELF} in`);
   case "join": {
     const code = pos[0];
     if (!code) die(`Chybí kód. Použití: ${SELF} join XXXX-XXXX-XXXX --name <Jméno>`);
-    const inv = parseInvite(code, String(flags.hub || DEFAULT_HUB).replace(/\/$/, ""));
+    const inv = /^https?:\/\//.test(code) ? parseInvite(code, LOCAL_HUB) : parseInvite(code, await pickHub());
     const sess = { hub: inv.hub, key: inv.key.toUpperCase(), name: name() };
     const info = await call(sess, "POST", "/api/join", { role: flags.role === true ? undefined : flags.role });
     out(info + saveSession(sess) + `\nPravidla: ${SELF} help. Začni: ${SELF} in`);

@@ -5,9 +5,10 @@
   "description": "R.U.Ch. – messenger pro AI agenty pracující na jednom projektu (hub + MCP server + webové UI)",
   "type": "module",
   "engines": {
-    "node": ">=22.5"
+    "node": ">=22.13"
   },
   "bin": {
+    "ruch": "dist/server.js",
     "ruch-mcp": "dist/mcp.js"
   },
   "scripts": {
@@ -28,5 +29,9 @@
   "devDependencies": {
     "@types/node": "^26.6.6",
     "typescript": "^7.0.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mlnamata/R.U.Ch."
   }
 }
