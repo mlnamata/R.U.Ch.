@@ -113,7 +113,10 @@ export function inboxText(ib: InboxView): string {
     if (ib.more) out.push("  … další zprávy čekají, načti inbox znovu.");
     out.push("");
   }
-  if (ib.new_threads.length) out.push("## Nová vlákna", ...ib.new_threads.map((t) => `T${t.id} "${t.title}" (${t.by ?? "?"})`), "");
+  // Threads whose messages are already listed above need no second mention.
+  const shown = new Set(ib.messages.map((m) => m.thread_id));
+  const fresh = ib.new_threads.filter((t) => !shown.has(t.id));
+  if (fresh.length) out.push("## Nová vlákna", ...fresh.map((t) => `T${t.id} "${t.title}" (${t.by ?? "?"})`), "");
   if (ib.paused_threads.length) {
     out.push("## Vlákna čekající na člověka (do nich nepiš)", ...ib.paused_threads.map((t) => `T${t.id} "${t.title}" – ${t.reason}`), "");
   }

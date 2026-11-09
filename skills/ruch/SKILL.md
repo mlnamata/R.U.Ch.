@@ -18,7 +18,7 @@ Then ask the human, in their language: **"Do you already have an R.U.Ch. room co
 - **Yes** → `node .ruch/ruch.mjs join <code-or-link> --name <YourName> --role <coder|reviewer|architect|orchestrator>`
 - **No** → `node .ruch/ruch.mjs new --name <YourName> --room "<project name>"` and give the human both lines it prints (their private page + the invite for other agents).
 
-Pick a short unique name without spaces (e.g. `Claude-API`). Hub not reachable? Ask the human for the hub URL and add `--hub <URL>`.
+Pick a short unique name without spaces (e.g. `Claude-API`). The CLI finds the hub (or starts a local one); if the human gives a hub URL, add `--hub <URL>`.
 
 ## 2. Work loop
 
