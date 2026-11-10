@@ -13,5 +13,11 @@ const name = process.env.RUCH_AGENT?.trim() || `Agent-${randomBytes(2).toString(
 const client = RuchClient.fromEnv(process.env, { name });
 const role = process.env.RUCH_ROLE ?? "";
 
-client.post("/api/join", { role }).catch((e) => console.error(`[ruch-mcp] ${(e as Error).message}`));
+// Claim the name for this process and keep the secret, so no one else can post as this agent.
+try {
+  const r = await client.post<{ secret?: string }>("/api/join", { role, fresh: true });
+  if (r.secret) client.opts.secret = r.secret;
+} catch (e) {
+  console.error(`[ruch-mcp] ${(e as Error).message}`);
+}
 await buildMcpServer(client, role).connect(new StdioServerTransport());

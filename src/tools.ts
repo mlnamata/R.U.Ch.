@@ -42,6 +42,41 @@ const q = (o: Record<string, unknown>) => {
 
 export const TOOLS: ToolDef[] = [
   {
+    name: "coordinate",
+    description:
+      "Who works where. start (text=plan, paths=your area, rules) at session start · end (text=summary, left[]) when done · areas · area (paths, rules) · release_area · request (to, text, details): ask an area owner to change something · approve (id) / feedback (id, text) on work you requested.",
+    schema: z.object({
+      action: z.enum(["start", "end", "areas", "area", "release_area", "request", "approve", "feedback"]),
+      text: z.string().optional(),
+      paths: z.array(z.string()).optional(),
+      rules: z.string().optional(),
+      left: z.array(z.string()).optional(),
+      to: z.string().optional(),
+      details: z.string().optional(),
+      id: z.number().optional(),
+    }),
+    run: (c, a) => {
+      switch (a.action) {
+        case "start":
+          return c.text("POST", "/api/start", { plan: a.text ?? "", paths: a.paths?.length ? a.paths : undefined, rules: a.rules });
+        case "end":
+          return c.text("POST", "/api/end", { summary: a.text ?? "", left: a.left });
+        case "areas":
+          return c.text("GET", "/api/areas");
+        case "area":
+          return c.text("POST", "/api/areas", { paths: a.paths ?? [], rules: a.rules });
+        case "release_area":
+          return c.text("DELETE", "/api/areas");
+        case "request":
+          return c.text("POST", "/api/requests", { to: a.to ?? "", what: a.text ?? "", details: a.details });
+        case "approve":
+          return c.text("PATCH", `/api/tasks/${a.id}`, { status: "done" });
+        default:
+          return c.text("POST", `/api/tasks/${a.id}/feedback`, { text: a.text ?? "" });
+      }
+    },
+  },
+  {
     name: "inbox",
     description: "New items for you: messages, questions to you, answers, tasks, locks. Call first each step. wait>0 blocks until activity.",
     readOnly: true,
@@ -130,7 +165,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: "files",
-    description: "File locks. claim before editing (conflict = someone else edits it, don't) | release when done | check.",
+    description: "File locks. claim before editing (conflict or other's area = don't edit; request instead) | release when done | check.",
     schema: z.object({ action: z.enum(["claim", "release", "check"]), paths: z.array(z.string()).optional(), reason: z.string().optional() }),
     run: (c, a) => {
       if (a.action === "claim") return c.text("POST", "/api/claims", { paths: a.paths ?? [], reason: a.reason });

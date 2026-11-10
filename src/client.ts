@@ -14,6 +14,8 @@ export interface ClientOptions {
   /** Room key: the agent code (agents) or the owner key (the human). */
   key: string;
   name: string;
+  /** Per-agent secret returned by a fresh join. */
+  secret?: string;
 }
 
 /** Accepts a bare code ("7KQ2-X9MD-4TPA") or an invite link ("https://hub/j/7KQ2-X9MD-4TPA"). */
@@ -31,9 +33,9 @@ export class RuchClient {
 
   static fromEnv(env = process.env, overrides: Partial<ClientOptions> = {}): RuchClient {
     const name = overrides.name ?? env.RUCH_AGENT ?? env.RUCH_NAME;
-    if (!name) throw new Error("Nastav jméno agenta v proměnné RUCH_AGENT (např. RUCH_AGENT=Alfa).");
+    if (!name) throw new Error("Set the agent name in RUCH_AGENT (e.g. RUCH_AGENT=Alfa).");
     const code = overrides.key ?? env.RUCH_CODE;
-    if (!code) throw new Error("Nastav kód místnosti v proměnné RUCH_CODE (vytvoříš ho na webu hubu nebo `node ruch.mjs new`).");
+    if (!code) throw new Error("Set the room code in RUCH_CODE (create a room on the hub website or with `node .ruch/ruch.mjs new`).");
     const inv = parseInvite(code, overrides.url ?? env.RUCH_URL ?? env.RUCH_HUB ?? "http://127.0.0.1:4317");
     return new RuchClient({ url: inv.url, key: inv.key, name });
   }
@@ -44,12 +46,13 @@ export class RuchClient {
       "x-ruch-name": encodeURIComponent(this.opts.name),
     };
     if (opts.text) headers.accept = "text/plain";
+    if (this.opts.secret) headers["x-ruch-secret"] = this.opts.secret;
     if (body !== undefined) headers["content-type"] = "application/json";
     let res: Response;
     try {
       res = await fetch(this.opts.url + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: opts.signal });
     } catch (e) {
-      throw new RuchApiError(0, "hub_unreachable", `Hub R.U.Ch. na ${this.opts.url} neodpovídá (${(e as Error).message}).`);
+      throw new RuchApiError(0, "hub_unreachable", `R.U.Ch. hub at ${this.opts.url} is not answering (${(e as Error).message}).`);
     }
     const raw = await res.text();
     if (!res.ok) {
