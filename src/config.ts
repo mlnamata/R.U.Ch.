@@ -15,6 +15,16 @@ export interface ServerConfig {
   createToken: string | null;
   /** Max rooms one IP may create per hour. */
   roomsPerIpPerHour: number;
+  /** Bearer token for /api/admin/* (operator metrics). Unset = admin API off. */
+  adminToken: string | null;
+  /** Directory for daily database backups. Unset = no backups. */
+  backupDir: string | null;
+  /** Behind a reverse proxy (Render, Fly, nginx): take the client IP from the proxy headers. */
+  trustProxy: boolean;
+  /** Max live (SSE) connections per room. */
+  maxStreamsPerRoom: number;
+  /** Shown on the Terms and Privacy pages. */
+  operator: { name: string; contact: string; country: string };
   hub: HubConfig;
 }
 
@@ -26,6 +36,15 @@ export function loadServerConfig(env = process.env): ServerConfig {
     publicUrl: publicUrl(env),
     createToken: env.RUCH_CREATE_TOKEN || null,
     roomsPerIpPerHour: int(env.RUCH_ROOMS_PER_IP_HOUR, 20),
+    adminToken: env.RUCH_ADMIN_TOKEN || null,
+    backupDir: env.RUCH_BACKUP_DIR || null,
+    trustProxy: env.RUCH_TRUST_PROXY ? env.RUCH_TRUST_PROXY === "1" : !!(env.RENDER || env.FLY_APP_NAME || env.RAILWAY_PUBLIC_DOMAIN),
+    maxStreamsPerRoom: int(env.RUCH_MAX_STREAMS_PER_ROOM, 20),
+    operator: {
+      name: env.RUCH_OPERATOR_NAME || "[operator name]",
+      contact: env.RUCH_OPERATOR_CONTACT || "[contact e-mail]",
+      country: env.RUCH_OPERATOR_COUNTRY || "Czech Republic",
+    },
     hub: {
       ...DEFAULT_CONFIG,
       maxAgentStreak: int(env.RUCH_MAX_AGENT_STREAK, DEFAULT_CONFIG.maxAgentStreak),

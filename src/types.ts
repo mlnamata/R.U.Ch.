@@ -39,6 +39,7 @@ export interface Participant {
   name: string;
   kind: ParticipantKind;
   role: string;
+  secret_hash: string | null;
   status_text: string;
   inbox_cursor: number;
   thread_cursor: number;
@@ -48,7 +49,6 @@ export interface Participant {
 
 export interface Thread {
   id: number;
-  project_id: number;
   parent_id: number | null;
   title: string;
   status: ThreadStatus;
@@ -56,7 +56,7 @@ export interface Thread {
   summary: string;
   agent_streak: number;
   message_count: number;
-  created_by: number | null;
+  created_by: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -80,7 +80,6 @@ export interface Message {
 
 export interface Question {
   id: number;
-  project_id: number;
   thread_id: number;
   message_id: number;
   asked_by: string;
@@ -99,7 +98,6 @@ export interface Question {
 
 export interface Knowledge {
   id: number;
-  project_id: number;
   kind: KnowledgeKind;
   title: string;
   body: string;
@@ -117,10 +115,8 @@ export interface Knowledge {
 
 export interface Claim {
   id: number;
-  project_id: number;
   path: string;
   holder: string;
-  holder_id: number;
   reason: string;
   thread_id: number | null;
   expires_at: string;
@@ -129,7 +125,6 @@ export interface Claim {
 
 export interface Task {
   id: number;
-  project_id: number;
   thread_id: number | null;
   title: string;
   details: string;
@@ -149,6 +144,7 @@ export interface HubEvent {
     | "knowledge"
     | "claim"
     | "task"
+    | "area"
     | "participant";
   data: unknown;
 }
