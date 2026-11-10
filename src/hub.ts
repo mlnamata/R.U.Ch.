@@ -1248,7 +1248,7 @@ export class Hub {
       const tid = r.thread_id !== null ? Number(r.thread_id) : null;
       const where = () => tid ?? Number(this.coordThread(by.project_id).id);
       if (status === "review" && creator && creator !== by.name) {
-        this.notice(by, where(), `@${creator} #${n} is ready for your review: ${t.title}. Approve: task ${n} done · or send feedback.`, { task: n, type: "review" });
+        this.notice(by, where(), `@${creator} #${n} is ready for your review: ${t.title}. Check it, then: approve ${n} · or feedback ${n} "what to fix"`, { task: n, type: "review" });
       } else if (status === "done" && t.assignee && t.assignee !== by.name) {
         this.notice(by, where(), `@${t.assignee} #${n} approved: ${t.title}`, { task: n, type: "approved" });
       }

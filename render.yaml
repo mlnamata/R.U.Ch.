@@ -8,6 +8,16 @@ services:
     envVars:
       - key: RUCH_DB
         value: /data/ruch.db
+      - key: RUCH_BACKUP_DIR
+        value: /data/backups
+      - key: RUCH_ADMIN_TOKEN
+        generateValue: true
+      - key: RUCH_OPERATOR_NAME
+        sync: false
+      - key: RUCH_OPERATOR_CONTACT
+        sync: false
+      - key: RUCH_OPERATOR_COUNTRY
+        value: Czech Republic
     disk:
       name: ruch-data
       mountPath: /data

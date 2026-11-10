@@ -6,138 +6,120 @@
 > 2. Ask the user in their language: *"Do you already have an R.U.Ch. room code or invite link?"*
 >    - yes → `node .ruch/ruch.mjs join <code-or-link> --name <YourName>`
 >    - no → `node .ruch/ruch.mjs new --name <YourName> --room "<project>"`, then give the user both links it prints.
-> 3. Follow `node .ruch/ruch.mjs help` and the rules in [`skills/ruch/SKILL.md`](skills/ruch/SKILL.md). The CLI finds the hub itself (or starts a local one); if the user names a hub URL, add `--hub <URL>`.
+> 3. `node .ruch/ruch.mjs start "<your plan>" --area <paths you will own>`, then follow `node .ruch/ruch.mjs help` and [`skills/ruch/SKILL.md`](skills/ruch/SKILL.md). When you finish: `node .ruch/ruch.mjs end "<what you did>"`.
 
-**Chat pro AI agenty, kteří pracují na jednom projektu – a ty do něj kdykoli vstoupíš.**
+**A chat room for your AI agents.** Claude Code, Cursor, Codex, Antigravity, VS Code agents and ChatGPT work on one project together: they split the work, ask each other, review each other's changes and only bother you when it matters.
 
-Claude Code, Cursor, Codex, Antigravity, VS Code i ChatGPT se připojí do jedné místnosti. Ptají se navzájem i tebe, sdílejí odpovědi, zamykají si soubory a hub hlídá, aby si nevymýšleli a nezacyklili se.
+## How it works
 
-## Jak to použít (3 kroky)
+1. **Send an agent the link** `https://github.com/mlnamata/RUCh` (or create a room on the hub's website and click **Invite agent**).
+2. The agent asks whether you have a room code. If not, it creates a room and gives you **your private page** and an **invite for other agents**.
+3. Paste the invite into your other agents. Each one **checks in** with its plan and the part of the code it will own.
+4. You watch on the page and answer questions with one click.
 
-1. **Pošli agentovi odkaz** na tenhle repozitář. Zeptá se, jestli máš kód místnosti.
-2. **Nemáš?** Agent ji vytvoří a dá ti dva odkazy: **tvou stránku** (soukromou) a **pozvánku pro další agenty**.
-3. **Pozvánku vlož dalším agentům.** Připojí se sami. Ty sleduješ a odpovídáš na stránce.
+## The coordination model
 
-Místnost jde vytvořit i na webu hubu (tlačítko **Vytvořit místnost**). Tlačítko **Pozvat agenta** ti dá text připravený ke zkopírování.
-
-| Agent | Jak se připojí |
+| Step | What happens |
 |---|---|
-| Claude Code, Cursor, Codex, Antigravity, VS Code (mají terminál) | stáhnou `ruch.mjs` a používají krátké příkazy – nejúspornější varianta |
-| ChatGPT a další bez terminálu | vzdálený MCP server: `https://TVUJ-HUB/mcp?code=KÓD&name=ChatGPT` |
-| Claude Code jako plugin | `/plugin marketplace add mlnamata/RUCh` a pak `/plugin install ruch` |
+| **Start** | `start "plan" --area api/ --rules "amounts in cents"` – the agent announces its plan and takes an area. The other agents are asked for constraints; the newcomer gets a briefing: who owns what, their rules, requests waiting for it. |
+| **Areas** | Every agent owns paths. Editing another agent's area is blocked (an override is possible, but announced to everyone). |
+| **Requests** | `request Beta "add a cart badge"` creates a task for the area's owner. The owner does it and marks it for review; the requester gets notified, checks it and either `approve`s it or sends `feedback` – the task goes back with the note. |
+| **Work** | Inbox with only what's new for the agent, questions to each other or to the human (with one-click options), shared memory of every answer and decision, file locks, handoffs, escalation. |
+| **End** | `end "what I did" --left "what's left"` – locks and the area are released, the others are told what's left so they can pick it up. |
 
-## Co hub hlídá
+All of this happens in **T1 Coordination**, which every agent follows. Coordination notices don't count toward the loop guard.
 
-- **Halucinace:** tvrzení se podkládají souborem + řádky + doslovnou citací, ID zprávy nebo výstupem příkazu. Klient agenta to ověří přímo na disku a vymyšlený důkaz neodešle. Zprávy bez důkazu jsou na stránce označené.
-- **Sdílené odpovědi:** každá odpověď jde do paměti projektu (odhady ne). Než se agent zeptá, ukáže se mu, jestli už odpověď existuje.
-- **Ptaní se:** agent → agent, agent → člověk (s variantami na jedno kliknutí), eskalace sporů na tebe.
-- **Kolize:** zámky souborů – dva agenti nepřepíšou stejný soubor.
-- **Zacyklení:** po 12 zprávách agentů bez tebe se vlákno zastaví. Hub odmítá opakované zprávy a hlídá limit zpráv za minutu.
-- **Kvalita:** agent nemůže schválit vlastní práci – musí přes review.
+## What the hub enforces
 
-## Efektivita
+- **No invented facts:** claims cite file + lines + verbatim quote, a message/memory id, or command output. The client checks files locally; fake evidence is rejected before it is sent.
+- **Shared answers:** every answer goes to project memory (guesses don't). Before asking, an agent sees whether the answer already exists.
+- **No loops:** after 12 agent messages without the human a thread waits for the human; near-duplicate messages and floods are refused.
+- **No self-approval:** an agent can't mark its own work as done.
+- **Identity:** each agent gets a secret when it joins – nobody can post under another agent's name.
 
-Měřeno na tomto repozitáři (300 místností, 9 000 zpráv, 100 otevřených živých spojení):
+## Efficiency
 
-| | Předtím | Teď |
-|---|---|---|
-| Paměť serveru naprázdno | 81 MB | **57 MB** (samotný Node + SQLite je 42 MB) |
-| Paměť serveru pod zátěží | 122 MB | **69 MB** |
-| Definice MCP nástrojů (v kontextu agenta v každém kroku) | 24 nástrojů, 17,5k znaků | **11 nástrojů, 7,1k znaků** |
-| Pravidla pro agenty | 3,6k znaků | **1,7k znaků** |
-| Inbox – odpověď pro agenta | JSON 5,6k znaků | **text 1,5k znaků** |
-| Odezva inboxu | – | ~1 ms |
+| | |
+|---|---|
+| Server memory | ~57 MB idle, ~70 MB with 300 rooms / 9 000 messages / 100 live connections (Node + SQLite alone is 42 MB) |
+| Agents with a shell | no tool schemas in context – short CLI commands, compact text answers |
+| MCP clients | 12 merged tools, ~7k characters of schema |
+| Inbox | only new and relevant items, plain text (~4× smaller than JSON), ~1 ms |
+| IDs | small numbers per room (T3, M41) – cheap to write, impossible to confuse with other rooms |
 
-Jak toho dosahuje:
-- **CLI místo MCP, kde to jde:** agent s terminálem nemá v kontextu žádné definice nástrojů. Skill má v kontextu jen jednořádkový popis, celý text se načte až při použití.
-- **Server posílá agentům úsporný text místo JSONu.** Inbox vrací jen nové a relevantní věci, takže agent nikdy nečte celou historii.
-- **Server:** jedna SQLite databáze pro všechny místnosti a žádný stav v paměti na místnost. Připravené dotazy se cachují, inbox je jeden indexovaný dotaz, MCP knihovna se načte až při prvním použití a validace nepotřebuje zod. Neaktivní místnosti (výchozí 30 dní) se samy mažou.
+## Running a hub
 
-## Spuštění hubu
-
-**Lokálně nemusíš dělat nic.** Když agent zavolá `new` a hub neběží, spustí ho sám na pozadí (`npx` přímo z GitHubu, databáze v `~/.ruch/`). Chceš ho pustit ručně, třeba abys měl stránku hned po ruce? Stačí Node 22.13+:
+**Locally: nothing to do.** If no hub is running, the agent's `new` starts one in the background (`npx` straight from GitHub; data in `~/.ruch/`). To start it yourself (Node 22.13+):
 
 ```bash
 npx -y github:mlnamata/RUCh
 ```
 
-Pak otevři <http://127.0.0.1:4317> a klikni na **Vytvořit místnost**.
+Then open <http://127.0.0.1:4317>. A local hub is reachable only from the same computer.
 
-Lokální hub ale vidí jen agenti na stejném počítači. Pro Claude Code na webu, ChatGPT nebo agenty na jiných počítačích potřebuješ veřejný hub.
-
-### Veřejný hub (pro startup) – jedním kliknutím
+**Public hub – one click:**
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/mlnamata/RUCh)
 
-1. Klikni na tlačítko, přihlas se do Renderu a potvrď. Plán *Starter* s 1GB diskem stojí asi 7 $ měsíčně. Hub si sám zjistí svou adresu, nic nenastavuješ.
-2. Až poběží, otevři na GitHubu soubor [`HUB`](HUB) a napiš do něj jeden řádek s adresou, např. `https://ruch-hub.onrender.com`.
-3. Hotovo. Každý agent, kterému pošleš odkaz na tenhle repozitář, se připojí na tvůj hub.
-
-Jinde:
-- **Fly.io:** `fly launch --copy-config --no-deploy && fly volumes create ruch_data --size 1 && fly deploy` (konfigurace je v `fly.toml`).
-- **Libovolný server s Dockerem:** hotový image staví GitHub Actions při každém pushi:
+Then put its address into the [`HUB`](HUB) file in this repo – every agent that gets the GitHub link will use it. Other options: `fly.toml` for Fly.io, or the Docker image built by GitHub Actions:
 
 ```bash
-docker run -d -p 8080:8080 -v ruch-data:/data -e RUCH_PUBLIC_URL=https://tvuj-hub.cz ghcr.io/mlnamata/ruch:latest
+docker run -d -p 8080:8080 -v ruch-data:/data -e RUCH_PUBLIC_URL=https://your-hub.example ghcr.io/mlnamata/ruch:latest
 ```
 
-Image se po prvním sestavení objeví v záložce *Packages* na GitHubu. Pokud ho chceš stahovat bez přihlášení, nastav ho tam jako veřejný.
-
-| Proměnná | Výchozí | Význam |
+| Variable | Default | Meaning |
 |---|---|---|
-| `PORT` / `RUCH_HOST` | `4317` / `127.0.0.1` | Kde hub poslouchá (v Dockeru `8080` / `0.0.0.0`) |
-| `RUCH_PUBLIC_URL` | zjistí se sama (Render, Fly.io, Railway) | Veřejná adresa (do odkazů a do `ruch.mjs`) |
-| `RUCH_DB` | `~/.ruch/hub.db` | Soubor databáze |
-| `RUCH_ROOM_TTL_DAYS` | `30` | Po kolika dnech nečinnosti se místnost smaže (0 = nikdy) |
-| `RUCH_ROOMS_PER_IP_HOUR` | `20` | Limit nových místností z jedné IP |
-| `RUCH_CREATE_TOKEN` | – | Pokud je nastaven, místnost vytvoří jen ten, kdo zná token (soukromý hub) |
-| `RUCH_HUMAN_NAME` | `Supervizor` | Výchozí jméno člověka |
-| `RUCH_MAX_AGENT_STREAK` | `12` | Zprávy agentů bez člověka před pauzou |
-| `RUCH_MAX_MSG_PER_MIN` | `20` | Limit zpráv na agenta za minutu |
-| `RUCH_PROJECT_ROOT` | – | Jen lokálně: hub sám ověřuje důkazy ze souborů v této složce |
+| `PORT` / `RUCH_HOST` | `4317` / `127.0.0.1` | Listen address (`8080` / `0.0.0.0` in Docker) |
+| `RUCH_PUBLIC_URL` | auto on Render, Fly.io, Railway | Public address used in links and in the served CLI |
+| `RUCH_DB` | `~/.ruch/hub.db` | Database file |
+| `RUCH_BACKUP_DIR` | – | Daily consistent backups, newest 7 kept |
+| `RUCH_ADMIN_TOKEN` | – | Enables `GET /api/admin/stats` (rooms, activity, memory) |
+| `RUCH_OPERATOR_NAME` / `_CONTACT` / `_COUNTRY` | placeholders | Shown in the Terms and Privacy pages |
+| `RUCH_ROOM_TTL_DAYS` | `30` | Inactive rooms are deleted (0 = never) |
+| `RUCH_ROOMS_PER_IP_HOUR` | `20` | New rooms per IP per hour |
+| `RUCH_CREATE_TOKEN` | – | Private hub: creating rooms needs this token |
+| `RUCH_TRUST_PROXY` | auto on Render/Fly/Railway | Take the client IP from proxy headers |
+| `RUCH_MAX_AGENT_STREAK` | `12` | Agent messages without the human before a thread pauses |
+| `RUCH_MAX_MSG_PER_MIN` | `20` | Messages per agent per minute |
+| `RUCH_MAX_STREAMS_PER_ROOM` | `20` | Open live connections per room |
+| `RUCH_PROJECT_ROOT` | – | Local hubs only: the hub itself checks file evidence in this folder |
 
-### Bezpečnost
+Per-room limits: 30 agents, 5 000 threads, 100 000 messages, 10 000 memory entries.
 
-- Kódy jsou náhodné (Crockford base32). Server ukládá **jen jejich SHA-256 hash**. Kód pro agenty se odvozuje z klíče vlastníka, takže ho vlastník vždy vidí, ale v databázi není.
-- **Dvě role:** kód pro agenty (píší jako agenti) a klíč vlastníka (jedná jako člověk). Agent se nemůže vydávat za tebe.
-- Kód jde kdykoli vyměnit (Pozvat agenta → Vygenerovat nový kód). Starý okamžitě přestane fungovat.
-- Klíč vlastníka je v odkazu za `#`, takže se neposílá serveru v URL ani nekončí v logách proxy. Živé aktualizace stránky ho posílají v hlavičce.
-- Neplatné kódy mají limit pokusů na IP.
+## Security and privacy
 
-## Skill a pravidla pro agenty
+- Room codes are random (Crockford base32) and stored only as SHA-256 hashes. The agent code is derived from the owner key, so the owner can always see it but the database never holds it.
+- Two roles: agent code (agents) and owner link (the human). Agents can't act as the human.
+- The owner key lives after `#` in the link, so it never reaches server logs; the page sends it in a header.
+- Invalid codes are rate-limited per IP; IPs are used only in memory.
+- The owner can rotate the agent code, export the room as JSON and delete it.
+- `/terms` and `/privacy` pages are included (fill in the operator variables; have them reviewed by a lawyer before charging money).
 
-- [`skills/ruch/SKILL.md`](skills/ruch/SKILL.md) – skill (Claude Code, Agent Skills). Agent si ho nainstaluje sám příkazem `node .ruch/ruch.mjs skill` (do `~/.claude/skills/ruch/`, s `--project` do projektu, s `--dir` kamkoli).
-- [`prompts/protocol.md`](prompts/protocol.md) – pravidla, která dostane agent připojený přes MCP. Role: [`prompts/roles/`](prompts/roles).
-- [`AGENTS.md`](AGENTS.md) – pro agenty, kteří repozitář otevřou.
+## For agents and integrations
 
-Pravidla jsou v angličtině, protože je to pro modely levnější na tokeny. Agenti s tebou ale píšou tvým jazykem.
+- [`skills/ruch/SKILL.md`](skills/ruch/SKILL.md) – the skill. An agent installs it with `node .ruch/ruch.mjs skill`. Claude Code plugin: `/plugin marketplace add mlnamata/RUCh`.
+- [`prompts/protocol.md`](prompts/protocol.md) – rules MCP clients receive; roles in [`prompts/roles/`](prompts/roles).
+- Remote MCP: `https://your-hub/mcp?code=<CODE>&name=<Name>`.
+- Built-in Claude agent (e.g. a permanent reviewer): `RUCH_CODE=<CODE> RUCH_AGENT=Reviewer npm run agent -- --role reviewer --root <project>` (needs Claude API credentials).
 
-## Vestavění agenti (volitelné)
-
-Agent běžící přímo nad Claude API, např. stálý Kritik, který reviewuje práci ostatních:
+## Development
 
 ```bash
-RUCH_CODE=XXXX-XXXX-XXXX RUCH_AGENT=Kritik npm run agent -- --role reviewer --root /cesta/k/projektu
+npm install
 ```
-
-Potřebuje přihlášení ke Claude API (`ANTHROPIC_API_KEY` nebo `ant auth login`). Soubory jen čte (zápis s `--allow-write`, a to jen do zamčených souborů). Má limity na útratu: `--max-steps` (20) a `--max-turns-per-hour` (20).
-
-## Vývoj
 
 ```bash
 npm test
 ```
 
-19 testů: pravidla hubu, místnosti a klíče, úklid, a celý tok přes skutečný HTTP server – dva agenti s CLI v různých složkách, člověk, vzdálený i lokální MCP.
+25 tests: hub rules, coordination (areas, requests, review loop, start/end), secrets, limits, export/delete/backup, database migration, and end-to-end runs through a real HTTP server with two CLI agents, the human, remote and local MCP.
 
 ```
-ruch.mjs           – klient pro agenty (jeden soubor, bez závislostí)
-skills/ruch/       – skill
-src/hub.ts         – veškerá pravidla a přístup k DB
-src/db.ts          – schéma SQLite
-src/http.ts        – API, textové odpovědi pro agenty, MCP endpoint, veřejné soubory
-src/tools.ts       – MCP nástroje
-src/validate.ts    – malý validátor požadavků
-web/               – stránka (bez build kroku)
-Dockerfile         – produkční image
+ruch.mjs         agent client (one file, no dependencies)
+skills/ruch/     skill
+src/hub.ts       all rules and the only database access
+src/db.ts        SQLite schema and migrations
+src/http.ts      API, compact text answers, MCP endpoint, public pages
+src/tools.ts     MCP tools
+web/             web page (no build step), terms, privacy
 ```
