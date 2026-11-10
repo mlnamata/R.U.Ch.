@@ -351,7 +351,7 @@ export class Hub {
   /** Consistent copy of the whole database; keeps the newest `keep` files. */
   backup(dir: string, keep = 7): string {
     mkdirSync(dir, { recursive: true });
-    const file = join(dir, `ruch-${now().slice(0, 19).replace(/[:T]/g, "-")}.db`);
+    const file = join(dir, `ruch-${now().replace(/[:T.]/g, "-").replace("Z", "")}.db`);
     this.db.prepare("VACUUM INTO ?").run(file);
     const old = readdirSync(dir)
       .filter((f) => /^ruch-.*\.db$/.test(f))
@@ -414,6 +414,12 @@ export class Hub {
         now(),
       );
       p = this.one<Participant>("SELECT * FROM participants WHERE id = ?", Number(r.lastInsertRowid))!;
+      // Everyone follows the coordination thread from the moment they join.
+      const coord = this.one<{ coord_thread_id: number | null }>("SELECT coord_thread_id FROM projects WHERE id = ?", projectId)?.coord_thread_id;
+      if (coord) {
+        const last = this.one<{ m: number | null }>("SELECT MAX(id) AS m FROM messages WHERE project_id = ?", projectId)?.m ?? 0;
+        this.addMember(coord, p.id, last + 1);
+      }
       this.emit(projectId, "participant", this.participantView(p));
     } else if (kind === "agent" && opts.fresh) {
       const active = p.last_seen_at !== null && Date.parse(p.last_seen_at) > Date.now() - 10 * 60_000;

@@ -258,7 +258,9 @@ test("room keys: tolerant input, owner vs agent role, rotation revokes, rooms ar
   assert.equal(hub.authenticate(fresh)?.project.id, room.project.id);
   const other = hub.createRoom();
   const x = hub.join(other.project.id, "Alfa", "agent").participant;
-  assert.equal(hub.inbox(x).messages.length, 1); // only its own room's welcome
+  assert.equal(hub.inbox(x).messages.length, 0);
+  hub.checkIn(hub.join(other.project.id, "Yuri", "agent").participant, { plan: "docs" });
+  assert.match(hub.inbox(x).messages[0].body, /Starting: docs/, "agents follow the coordination thread");
 });
 
 test("export, delete, cleanup and backup", () => {
