@@ -156,7 +156,10 @@ export function inboxText(ib: InboxView): string {
   section(ib.changed.tasks, "Your tasks", ib.my_tasks.map(taskLine));
   section(ib.changed.my_claims, "Your locks", ib.my_claims.map((c) => claimLine(c, true)), false, true);
   section(ib.changed.others_claims, "Locked by others (don't edit)", ib.others_claims.map((c) => claimLine(c)), false, true);
-  return out.length ? out.join("\n") : "Nothing new.";
+  if (out.length) return out.join("\n");
+  // Idle is the moment to deal with questions the participant saw earlier and left open.
+  const old = ib.questions_for_me.map((q) => `Q${q.id}`).join(" ");
+  return old ? `Nothing new. Still open for you: ${old}` : "Nothing new.";
 }
 
 export function threadText(view: {

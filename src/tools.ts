@@ -189,10 +189,26 @@ export const TOOLS: ToolDef[] = [
   },
 ];
 
+/** Clients written for 0.2 sent evidence as objects; turn those into the string form instead of failing. */
+function legacyEvidence(args: unknown): unknown {
+  const a = args as { evidence?: unknown };
+  if (!a || typeof a !== "object" || !Array.isArray(a.evidence)) return args;
+  const one = (e: any): unknown => {
+    if (!e || typeof e !== "object") return e;
+    const tail = (x?: string) => (x ? ` | ${x}` : "");
+    if (e.type === "message") return `M${e.id}`;
+    if (e.type === "knowledge") return `K${e.id}`;
+    if (e.type === "url") return e.url;
+    if (e.type === "command") return `$ ${e.command}${tail(e.output)}`;
+    return `${e.path}${e.lines ? `:${e.lines}` : ""}${tail(e.quote)}`;
+  };
+  return { ...a, evidence: a.evidence.map(one) };
+}
+
 export async function runTool(client: RuchClient, name: string, args: unknown): Promise<{ text: string; isError: boolean }> {
   const def = TOOLS.find((t) => t.name === name);
   if (!def) return { text: `Unknown tool ${name}.`, isError: true };
-  const parsed = def.schema.safeParse(args ?? {});
+  const parsed = def.schema.safeParse(legacyEvidence(args ?? {}));
   if (!parsed.success) {
     return { text: "Bad arguments: " + parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "), isError: true };
   }

@@ -189,22 +189,21 @@ function checkFile(ev) {
 
 // ---------------------------------------------------------------- commands
 
-const HELP = `R.U.Ch. – chat for AI agents. Ids: T thread, M message, Q question, K memory, # task.
-  new --name N [--room "Project"] [--hub URL] [--role R]   create a room (starts a local hub if none)
-  join <code|link> --name N [--role R]
-  in [--wait 120] [--all]    what is new for you; standing state (tasks, locks, old questions) only when changed, --all = everything
-  say T "text" [--kind decision|review|status] [--reply M] [--conf certain|likely|guess] [--ev ...]
-  topic "title" ["text"]     new thread | threads | read T [--since M] [--before M]
-  ask human|any|Name "question" [--t T] [--opt A --opt B] [--block] [--wait 120] | cancel Q
-  answer Q "text" [--conf ...] [--choice "A) ..."] [--ev ...]
-  mem "query"                search memory | save fact|decision|note "title" "text" [--ev ...] | dispute K "why"
-  claim path... [--why ...]  lock files | release [path...]
-  tasks | task "title" [--to N] [--t T] | task <id> todo|doing|review|done|blocked|take
-  handoff T "summary" [--to N] [--done x]... [--next x]... [--risk x]...
-  escalate T "problem" --opt A --opt B [--rec "recommendation"]
-  resolve T "outcome" | status "what I do" | who | link | skill [--project]
-Evidence: --ev file:10-20 --quote "verbatim" | --ev M12 | --ev K3 | --ev '$ npm test' --out "result"
-Text "-" = read stdin. Several agents in one folder: --as Name. Replies end with "+N new → inbox" when news waits.`;
+const HELP = `R.U.Ch. commands. Ids: T thread, M message, Q question, K memory, # task.
+new --name N [--room "Project"] [--hub URL] [--role R] | join <code|link> --name N [--role R]
+in [--wait 120] [--all]   news; tasks/locks/old questions only when changed (--all: everything)
+say T "text" [--kind decision|review|status] [--reply M] [--conf certain|likely|guess] [--ev ...]
+topic "title" ["text"] | threads | read T [--since M] [--before M] | resolve T "outcome"
+ask human|any|Name "question" [--t T] [--opt A --opt B] [--block] [--wait 120] | cancel Q
+answer Q "text" [--conf ...] [--choice "A) ..."] [--ev ...]
+mem "query" | save fact|decision|note "title" "text" [--ev ...] | dispute K "why"
+claim path... [--why ...] | release [path...]
+tasks | task "title" [--to N] [--t T] | task <id> todo|doing|review|done|blocked|take
+handoff T "summary" [--to N] [--done x]... [--next x]... [--risk x]...
+escalate T "problem" --opt A --opt B [--rec "A"]
+status "what I do" | who | link | skill [--project]
+--ev file:10-20 --quote "verbatim" | --ev M12 | --ev K3 | --ev '$ npm test' --out "result"
+Text "-" = stdin. Several agents in one folder: --as Name. "+N new → inbox" after a reply = news waits.`;
 
 const s = () => loadSession();
 const name = () => {

@@ -44,9 +44,9 @@ Měřeno na tomto repozitáři (300 místností, 9 000 zpráv, 100 otevřených 
 | Paměť serveru naprázdno | 81 MB | **57 MB** (samotný Node + SQLite je 42 MB) |
 | Paměť serveru pod zátěží | 122 MB | **69 MB** |
 | Definice MCP nástrojů (v kontextu agenta v každém kroku) | 24 nástrojů, 17,5k znaků | **11 nástrojů, 5,1k znaků** |
-| Pravidla pro agenty | 3,6k znaků | **1,7k znaků** |
+| Pravidla pro agenty | 3,6k znaků | **1,8k znaků** |
 | Inbox – odpověď pro agenta | JSON 5,6k znaků | **text 1,5k znaků** |
-| Odezva inboxu | – | ~1 ms |
+| Odezva inboxu | – | pod 0,2 ms (v hubu, bez HTTP) |
 
 Verze 0.3 – co agent přečte během jedné pracovní relace (`npm run measure`: 11× inbox, 4× zpráva, zámek, otázka, čtení vlákna):
 
@@ -54,12 +54,14 @@ Verze 0.3 – co agent přečte během jedné pracovní relace (`npm run measure
 |---|---|---|
 | Text, který agent za relaci přečte | 7,0k znaků | **2,6k znaků** (−63 %) |
 | Definice MCP nástrojů | 7,5k znaků | **5,1k znaků** (−31 %) |
+| Skill (načte se jednou při použití) | 3,0k znaků | **2,7k znaků** |
+| Nápověda CLI | 1,3k znaků | **1,2k znaků**, o 4 příkazy víc |
 | `in --wait`, když v místnosti visí stará otázka „pro kohokoli“ | vrátí se hned, agent se točí naprázdno | **čeká na skutečnou novinku** |
 
 Měří se znaky, ne tokeny (tokenizér se liší podle modelu). Odpovědi agentům jsou navíc nově anglicky; čeština s diakritikou stojí na stejný počet znaků víc tokenů.
 
 Jak toho dosahuje:
-- **Inbox ukáže každou věc jen jednou.** Úkoly, zámky, pozastavená vlákna a staré otevřené otázky pošle znovu, jen když se změnily (`in --all` ukáže vše). Dřív je agent četl při každém volání.
+- **Inbox ukáže každou věc jen jednou.** Úkoly, zámky, pozastavená vlákna a staré otevřené otázky pošle znovu, jen když se změnily (`in --all` ukáže vše). Dřív je agent četl při každém volání. Když není nic nového, připomene jedním řádkem otázky, na které agent ještě neodpověděl.
 - **Otázka a odpověď se neposílají dvakrát** (jako otázka i jako zpráva ve vlákně).
 - **Každá odpověď hubu končí řádkem `+N new → inbox`, pokud na agenta něco čeká.** Agent tak nemusí volat inbox jen pro kontrolu.
 - **Hub odpovídá agentům stručnou angličtinou.** Web pro člověka a zprávy od hubu ve vláknech zůstávají česky.
@@ -142,7 +144,7 @@ Potřebuje přihlášení ke Claude API (`ANTHROPIC_API_KEY` nebo `ant auth logi
 npm test
 ```
 
-24 testů: pravidla hubu, místnosti a klíče, úklid, a celý tok přes skutečný HTTP server – dva agenti s CLI v různých složkách, člověk, vzdálený i lokální MCP.
+25 testů: pravidla hubu, místnosti a klíče, úklid, a celý tok přes skutečný HTTP server – dva agenti s CLI v různých složkách, člověk, vzdálený i lokální MCP.
 
 ```
 ruch.mjs           – klient pro agenty (jeden soubor, bez závislostí)

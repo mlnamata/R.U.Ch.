@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { openDatabase } from "../db.js";
 import { inboxText } from "../format.js";
 import { DEFAULT_CONFIG, Hub, HubError } from "../hub.js";
-import { parseEvidence } from "../tools.js";
+import { parseEvidence, runTool } from "../tools.js";
 import { DatabaseSync } from "node:sqlite";
 
 function setup(overrides: Partial<typeof DEFAULT_CONFIG> = {}) {
@@ -234,7 +234,7 @@ test("inbox shows standing state once and again only when it changes", () => {
   // The question is listed as a question, not a second time as a message.
   assert.equal(first.match(/Jaký port/g)?.length, 1);
 
-  assert.equal(inboxText(hub.inbox(b)), "Nothing new.");
+  assert.equal(inboxText(hub.inbox(b)), "Nothing new. Still open for you: Q1");
   hub.post(a, thread.id, { body: "Hotovo, testy prošly" });
   assert.equal(inboxText(hub.inbox(b)), `T${thread.id}:\n M3 Alfa: Hotovo, testy prošly`);
 
@@ -276,6 +276,18 @@ test("MCP evidence strings parse into the same evidence as the CLI flags", () =>
     { type: "file", path: "README.md", lines: undefined, quote: undefined },
   ]);
   assert.equal(parseEvidence([]), undefined);
+});
+
+test("MCP tools still accept evidence objects from 0.2 clients", async () => {
+  const sent: unknown[] = [];
+  const fake = { text: async (_m: string, _p: string, body: unknown) => (sent.push(body), "OK") } as never;
+  const r = await runTool(fake, "send", { thread: 1, text: "x", evidence: [{ type: "file", path: "a.ts", lines: "1-2", quote: "q" }, { type: "message", id: 4 }, "K2"] });
+  assert.equal(r.isError, false);
+  assert.deepEqual((sent[0] as { evidence: unknown }).evidence, [
+    { type: "file", path: "a.ts", lines: "1-2", quote: "q" },
+    { type: "message", id: 4 },
+    { type: "knowledge", id: 2 },
+  ]);
 });
 
 test("a version 2 database is upgraded in place", () => {
