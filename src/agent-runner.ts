@@ -38,7 +38,7 @@ const ruch = RuchClient.fromEnv(process.env, args.name ? { name: args.name } : {
 const role = args.role!;
 const roleText = loadRole(role);
 if (!roleText) {
-  console.error(`Neznámá role "${role}". Dostupné: ${ROLES.join(", ")} (nebo přidej prompts/roles/${role}.md).`);
+  console.error(`Unknown role "${role}". Available: ${ROLES.join(", ")} (or add prompts/roles/${role}.md).`);
   process.exit(1);
 }
 const root = args.root ?? null;
@@ -54,7 +54,7 @@ const log = (...a: unknown[]) => console.log(`[${new Date().toLocaleTimeString()
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", ".next", "__pycache__", ".venv"]);
 
 function inRoot(p: string): string {
-  if (!root) throw new Error("Agent nemá přístup k souborům (spusť s --root).");
+  if (!root) throw new Error("This agent has no file access (start it with --root).");
   const full = resolveInRoot(root, p || ".");
   if (!full) throw new Error(`Cesta ${p} je mimo projekt.`);
   return full;
@@ -79,7 +79,7 @@ interface LocalTool {
 const fileTools: LocalTool[] = [
   {
     name: "read_file",
-    description: "Přečte soubor z projektu s čísly řádků (max 400 řádků najednou). Používej před každým tvrzením o kódu.",
+    description: "Read a project file with line numbers (max 400 lines per call). Use it before any claim about code.",
     schema: z.object({ path: z.string(), from_line: z.number().int().min(1).optional(), to_line: z.number().int().optional() }),
     run: (a: { path: string; from_line?: number; to_line?: number }) => {
       const lines = readFileSync(inRoot(a.path), "utf8").split(/\r?\n/);
@@ -89,22 +89,22 @@ const fileTools: LocalTool[] = [
         .slice(from - 1, to)
         .map((l, i) => `${String(from + i).padStart(5)}  ${l}`)
         .join("\n");
-      return `${a.path} (řádky ${from}-${to} z ${lines.length})\n${body}`;
+      return `${a.path} (lines ${from}-${to} of ${lines.length})\n${body}`;
     },
   },
   {
     name: "list_files",
-    description: "Vypíše soubory v projektu (rekurzivně, bez node_modules/.git), max 300.",
+    description: "List project files (recursive, without node_modules/.git), max 300.",
     schema: z.object({ dir: z.string().default(".") }),
     run: (a: { dir: string }) => {
       const out: string[] = [];
       walk(inRoot(a.dir), out, 300);
-      return out.map((f) => relative(root!, f)).join("\n") || "(prázdné)";
+      return out.map((f) => relative(root!, f)).join("\n") || "(empty)";
     },
   },
   {
     name: "search_files",
-    description: "Najde řádky odpovídající regulárnímu výrazu v souborech projektu (max 100 výsledků).",
+    description: "Find lines matching a regular expression in project files (max 100 hits).",
     schema: z.object({ pattern: z.string(), dir: z.string().default(".") }),
     run: (a: { pattern: string; dir: string }) => {
       const re = new RegExp(a.pattern, "i");
@@ -127,19 +127,19 @@ const fileTools: LocalTool[] = [
 if (args["allow-write"]) {
   fileTools.push({
     name: "write_file",
-    description: "Zapíše celý obsah souboru. Funguje jen pro cesty, které máš zamčené přes claim_files.",
+    description: "Write a whole file. Only works for paths you locked with the files tool (claim).",
     schema: z.object({ path: z.string(), content: z.string() }),
     run: async (a: { path: string; content: string }) => {
       const claims = await ruch.get<Claim[]>("/api/claims");
       const p = normalizePath(a.path);
       // The claim must cover the file (same path or a parent directory), not just overlap it.
       if (!claims.some((c) => c.holder === ruch.opts.name && (c.path === p || c.path === "." || p.startsWith(c.path + "/")))) {
-        throw new Error(`Soubor ${p} nemáš zamčený. Nejdřív zavolej claim_files.`);
+        throw new Error(`You have not locked ${p}. Claim it first (files tool).`);
       }
       const full = inRoot(p);
       mkdirSync(dirname(full), { recursive: true });
       writeFileSync(full, a.content);
-      return `Zapsáno ${p} (${a.content.split("\n").length} řádků).`;
+      return `Wrote ${p} (${a.content.split("\n").length} lines).`;
     },
   });
 }
@@ -160,7 +160,7 @@ async function execute(name: string, input: unknown): Promise<{ text: string; is
   const local = fileTools.find((t) => t.name === name);
   if (local) {
     const parsed = local.schema.safeParse(input ?? {});
-    if (!parsed.success) return { text: `Neplatné argumenty: ${parsed.error.message}`, isError: true };
+    if (!parsed.success) return { text: `Bad arguments: ${parsed.error.message}`, isError: true };
     try {
       return { text: await local.run(parsed.data), isError: false };
     } catch (e) {
@@ -190,7 +190,7 @@ async function systemPrompt(): Promise<string> {
 async function workTurn(inbox: string) {
   const system = await systemPrompt();
   const messages: Anthropic.Beta.BetaMessageParam[] = [
-    { role: "user", content: `Nový stav tvého inboxu v R.U.Ch.:\n\n${inbox}\n\nZpracuj to podle své role.` },
+    { role: "user", content: `Your R.U.Ch. inbox:\n\n${inbox}\n\nHandle it according to your role. If this is your first turn, check in first (coordinate start).` },
   ];
   for (let step = 0; step < maxSteps; step++) {
     const response = await anthropic.beta.messages.create({
@@ -205,7 +205,7 @@ async function workTurn(inbox: string) {
     });
 
     if (response.stop_reason === "refusal") {
-      log("Model požadavek odmítl:", response.stop_details?.category ?? "", response.stop_details?.explanation ?? "");
+      log("The model declined:", response.stop_details?.category ?? "", response.stop_details?.explanation ?? "");
       return;
     }
     // Keep the full content (including thinking blocks) – the conversation is append-only.
@@ -214,12 +214,12 @@ async function workTurn(inbox: string) {
     if (response.stop_reason === "pause_turn") continue;
     const uses = response.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use");
     if (response.stop_reason === "max_tokens" && uses.length === 0) {
-      log("Odpověď narazila na max_tokens, končím krok.");
+      log("Hit max_tokens, ending this turn.");
       return;
     }
     if (uses.length === 0) {
       const text = response.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n").trim();
-      if (text) log("Hotovo:", text.slice(0, 300));
+      if (text) log("Done:", text.slice(0, 300));
       return;
     }
     const results = await Promise.all(
@@ -231,8 +231,8 @@ async function workTurn(inbox: string) {
     );
     messages.push({ role: "user", content: results });
   }
-  log(`Dosažen limit ${maxSteps} kroků v jednom tahu.`);
-  await runTool(ruch, "status", { text: `zastaven limitem ${maxSteps} kroků – potřebuju nasměrovat` });
+  log(`Reached the limit of ${maxSteps} steps in one turn.`);
+  await runTool(ruch, "status", { text: `stopped at ${maxSteps} steps – need direction` });
 }
 
 // ------------------------------------------------------------------ main loop
@@ -242,7 +242,7 @@ const turns: number[] = [];
 async function main() {
   await ruch.post("/api/join", { role });
   await runTool(ruch, "status", { text: `online (${role})` });
-  log(`Připojen(a) k ${ruch.opts.url}, role ${role}, model ${args.model}${root ? `, kořen ${root}` : ""}`);
+  log(`Connected to ${ruch.opts.url}, role ${role}, model ${args.model}${root ? `, root ${root}` : ""}`);
 
   for (;;) {
     const ib = await ruch.get<InboxView>("/api/inbox");
@@ -252,8 +252,8 @@ async function main() {
       const hourAgo = Date.now() - 3_600_000;
       while (turns.length && turns[0] < hourAgo) turns.shift();
       if (turns.length >= maxTurnsPerHour) {
-        log(`Limit ${maxTurnsPerHour} tahů za hodinu – čekám (šetří API kredity).`);
-        await runTool(ruch, "status", { text: "pauza – hodinový limit tahů" });
+        log(`Limit of ${maxTurnsPerHour} turns per hour – waiting (saves API credits).`);
+        await runTool(ruch, "status", { text: "paused – hourly turn limit" });
         await new Promise((r) => setTimeout(r, 5 * 60_000));
         continue;
       }
@@ -262,20 +262,20 @@ async function main() {
         await workTurn(inboxText(ib));
       } catch (e) {
         if (e instanceof Anthropic.AuthenticationError) {
-          console.error("Chybí nebo neplatí přihlášení k Claude API (ANTHROPIC_API_KEY nebo `ant auth login`).");
+          console.error("Missing or invalid Claude API credentials (ANTHROPIC_API_KEY or `ant auth login`).");
           process.exit(1);
         } else if (e instanceof Anthropic.RateLimitError) {
-          log("Rate limit API – čekám minutu.");
+          log("API rate limit – waiting a minute.");
           await new Promise((r) => setTimeout(r, 60_000));
         } else if (e instanceof Anthropic.APIError) {
-          log(`Chyba API ${e.status}: ${e.message}`);
+          log(`API error ${e.status}: ${e.message}`);
         } else throw e;
       }
       if (args.once) return;
       continue;
     }
     if (args.once) {
-      log("Nic k práci.");
+      log("Nothing to do.");
       return;
     }
     await ruch.text("GET", "/api/inbox?wait=120&peek=1");

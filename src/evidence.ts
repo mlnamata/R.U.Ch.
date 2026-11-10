@@ -45,8 +45,8 @@ function checkFile(ev: Extract<Evidence, { type: "file" }>, root: string | null)
   if (!root) {
     // Hosted hub cannot see the agent's files; the agent's CLI verifies them locally instead.
     return ev.checked
-      ? { evidence: ev, result: "verified", note: "ověřeno klientem agenta" }
-      : { evidence: ev, result: "unchecked", note: "soubor nelze ověřit na serveru" };
+      ? { evidence: ev, result: "verified", note: "verified by the agent's client" }
+      : { evidence: ev, result: "unchecked", note: "the server cannot see this file" };
   }
   const full = resolveInRoot(root, ev.path);
   if (!full) return { evidence: ev, result: "invalid", note: `cesta ${ev.path} je mimo projekt` };
@@ -54,24 +54,24 @@ function checkFile(ev: Extract<Evidence, { type: "file" }>, root: string | null)
   const st = statSync(full);
   if (st.isDirectory()) {
     if (ev.lines || ev.quote) {
-      return { evidence: ev, result: "invalid", note: `${ev.path} je složka, nelze citovat řádky` };
+      return { evidence: ev, result: "invalid", note: `${ev.path} is a folder, it has no lines to cite` };
     }
     return { evidence: ev, result: "verified" };
   }
   if (st.size > MAX_FILE_BYTES) {
-    return { evidence: ev, result: "unchecked", note: `${ev.path} je příliš velký na ověření` };
+    return { evidence: ev, result: "unchecked", note: `${ev.path} is too large to check` };
   }
   const text = readFileSync(full, "utf8");
   const lines = text.split(/\r?\n/);
   let scope = text;
   if (ev.lines) {
     const range = parseLines(ev.lines);
-    if (!range) return { evidence: ev, result: "invalid", note: `neplatný rozsah řádků "${ev.lines}" (použij např. "10-25")` };
+    if (!range) return { evidence: ev, result: "invalid", note: `invalid line range "${ev.lines}" (use e.g. "10-25")` };
     if (range[1] > lines.length) {
       return {
         evidence: ev,
         result: "invalid",
-        note: `${ev.path} má jen ${lines.length} řádků, rozsah ${ev.lines} neexistuje`,
+        note: `${ev.path} has only ${lines.length} lines, ${ev.lines} does not exist`,
       };
     }
     scope = lines.slice(range[0] - 1, range[1]).join("\n");
@@ -81,7 +81,7 @@ function checkFile(ev: Extract<Evidence, { type: "file" }>, root: string | null)
       return {
         evidence: ev,
         result: "invalid",
-        note: `citace se v ${ev.path}${ev.lines ? `:${ev.lines}` : ""} nenachází – načti soubor znovu a cituj doslova`,
+        note: `the quote is not in ${ev.path}${ev.lines ? `:${ev.lines}` : ""} – read the file again and quote verbatim`,
       };
     }
   }
@@ -96,12 +96,12 @@ export function checkEvidence(list: Evidence[], lookup: EvidenceLookup): Evidenc
       case "message":
         return lookup.messageExists(ev.id)
           ? { evidence: ev, result: "verified" }
-          : { evidence: ev, result: "invalid", note: `zpráva M${ev.id} neexistuje` };
+          : { evidence: ev, result: "invalid", note: `message M${ev.id} does not exist` };
       case "knowledge": {
         const st = lookup.knowledgeStatus(ev.id);
         if (st === null) return { evidence: ev, result: "invalid", note: `znalost K${ev.id} neexistuje` };
-        if (st === "superseded") return { evidence: ev, result: "invalid", note: `znalost K${ev.id} je nahrazená novější` };
-        if (st === "disputed") return { evidence: ev, result: "unchecked", note: `znalost K${ev.id} je zpochybněná` };
+        if (st === "superseded") return { evidence: ev, result: "invalid", note: `memory K${ev.id} was replaced by a newer entry` };
+        if (st === "disputed") return { evidence: ev, result: "unchecked", note: `memory K${ev.id} is disputed` };
         return { evidence: ev, result: "verified" };
       }
       case "command":
