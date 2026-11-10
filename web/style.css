@@ -165,7 +165,7 @@ dialog menu { display: flex; justify-content: flex-end; gap: 8px; margin: 0; pad
 }
 @media (max-width: 860px) {
   .mobile-tabs { display: flex; }
-  .top-actions #me, .brand #project-name, #btn-brief { display: none; }
+  .top-actions #me, .brand #project-name { display: none; }
   .topbar { padding: 8px 12px; gap: 8px; flex-wrap: wrap; }
   .layout { grid-template-columns: 1fr; }
   .pane { display: none; border: 0 !important; }
@@ -196,3 +196,31 @@ body.doc { display: block; overflow: auto; }
 .doc-page h1 { font-size: 1.8rem; }
 .doc-page h2 { font-size: 1.1rem; margin-top: 1.6em; }
 .doc-page .logo { text-decoration: none; font-size: 1.2rem; }
+
+/* landing extras */
+.landing { overflow-y: auto; align-items: flex-start; }
+.landing-card { padding-top: 6vh; }
+.how h2, #my-rooms h2 { font-size: 1rem; margin: 8px 0; }
+.steps { padding-left: 20px; line-height: 1.7; margin: 0 0 6px; }
+.features { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.features div { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.features h3 { margin: 0 0 4px; font-size: 0.95rem; }
+.features p { margin: 0; font-size: 0.88rem; color: var(--muted); }
+.faq { border-top: 1px solid var(--line); padding: 8px 0; }
+.faq summary { cursor: pointer; font-weight: 600; }
+.faq p { margin: 6px 0 0; color: var(--muted); }
+.foot { text-align: center; padding: 16px 0 24px; }
+.foot a, .brand a.logo { color: inherit; }
+.brand a.logo { text-decoration: none; color: var(--accent); }
+
+/* room menu */
+.menu { position: relative; }
+.menu summary { list-style: none; cursor: pointer; border: 1px solid var(--line); border-radius: 8px; padding: 3px 9px; font-size: 0.85rem; }
+.menu summary::-webkit-details-marker { display: none; }
+.menu-body { position: absolute; right: 0; top: calc(100% + 4px); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px; display: flex; flex-direction: column; gap: 4px; z-index: 5; min-width: 160px; box-shadow: 0 6px 24px rgb(0 0 0 / 0.12); }
+.menu-body button { text-align: left; border: 0; }
+.danger { color: var(--bad); }
+
+.thread-list .coord .t-title { color: var(--accent); }
+.msg.notice { background: var(--panel-2); }
+.tab h3.small { margin: 8px 0 0; }

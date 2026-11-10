@@ -21,6 +21,7 @@ const S = {
   thread: null,
   replyTo: null,
   filter: "",
+  bound: false,
 };
 
 // Rooms this browser owns, so the human can come back without the link.
@@ -30,6 +31,7 @@ function rememberRoom(key, name) {
   list.unshift({ key, name, at: Date.now() });
   save("ruch.rooms", JSON.stringify(list.slice(0, 30)));
 }
+const forgetRoom = (key) => save("ruch.rooms", JSON.stringify(rooms().filter((r) => r.key !== key)));
 
 // ------------------------------------------------------------------ API
 
@@ -83,13 +85,14 @@ function rich(text) {
 function time(iso) {
   const d = new Date(iso);
   const today = new Date().toDateString() === d.toDateString();
-  return today ? d.toLocaleTimeString("cs", { hour: "2-digit", minute: "2-digit" }) : d.toLocaleString("cs", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" });
+  return today ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : d.toLocaleString([], { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-const STATUS = { open: "otevřené", human_needed: "čeká na tebe", resolved: "uzavřené" };
-const KIND = { question: "otázka", answer: "odpověď", decision: "rozhodnutí", handoff: "předávka", review: "review", status: "stav" };
-const EV = { verified: "✓ důkazy ověřeny", unchecked: "? důkazy neověřitelné", missing: "⚠ bez důkazu", invalid: "✗ neplatné důkazy" };
-const CONF = { certain: "jisté", likely: "pravděpodobné", guess: "odhad" };
+const STATUS = { open: "open", human_needed: "waiting for you", resolved: "resolved" };
+const KIND = { question: "question", answer: "answer", decision: "decision", handoff: "handoff", review: "review", status: "update" };
+const EV = { verified: "✓ evidence verified", unchecked: "? evidence not checkable", missing: "⚠ no evidence", invalid: "✗ invalid evidence" };
+const CONF = { certain: "certain", likely: "likely", guess: "guess" };
+const TASK = { todo: "to do", doing: "in progress", review: "in review", done: "done", blocked: "blocked" };
 
 function evidenceLabel(e) {
   switch (e.type) {
@@ -118,35 +121,38 @@ function renderAll() {
   renderTodo();
   renderKnowledge(st.knowledge);
   renderTasks();
-  renderClaims();
+  renderAreas();
 }
 
 function renderThreads() {
   const list = $("#thread-list");
-  const rows = S.state.threads.filter((t) => !S.filter || t.status === S.filter);
+  const coord = S.state.coordination_thread;
+  const rows = S.state.threads
+    .filter((t) => !S.filter || t.status === S.filter)
+    .sort((a, b) => (a.id === coord ? -1 : b.id === coord ? 1 : 0));
   list.innerHTML = rows.length
     ? rows
         .map(
-          (t) => `<li class="${t.status}"><button data-id="${t.id}" class="${t.id === S.threadId ? "active" : ""}">
-            <span class="t-title">${esc(t.title)}</span>
-            <span class="t-meta">T${t.id} · ${STATUS[t.status]} · ${t.message_count} zpráv${t.open_questions ? ` · ${t.open_questions} otázek` : ""}${t.parent_id ? ` · pod T${t.parent_id}` : ""}</span>
+          (t) => `<li class="${t.status}${t.id === coord ? " coord" : ""}"><button data-id="${t.id}" class="${t.id === S.threadId ? "active" : ""}">
+            <span class="t-title">${t.id === coord ? "📌 " : ""}${esc(t.title)}</span>
+            <span class="t-meta">T${t.id} · ${STATUS[t.status]} · ${t.message_count} msgs${t.open_questions ? ` · ${t.open_questions} questions` : ""}${t.parent_id ? ` · under T${t.parent_id}` : ""}</span>
           </button></li>`,
         )
         .join("")
-    : `<li class="muted small" style="padding:8px 14px">Žádná vlákna.</li>`;
+    : `<li class="muted small" style="padding:8px 14px">No threads.</li>`;
 }
 
 function renderParticipants() {
   $("#participants").innerHTML = S.state.participants
     .map(
       (p) => `<li><span class="dot ${p.online ? "on" : ""}" title="${p.online ? "online" : "offline"}"></span><strong>${esc(p.name)}</strong>
-        <span class="muted small">${p.kind === "human" ? "člověk" : esc(p.role || "agent")}</span>
+        <span class="muted small">${p.kind === "human" ? "human" : esc(p.role || "agent")}</span>
         ${p.status_text ? `<span class="p-status">${esc(p.status_text)}</span>` : ""}</li>`,
     )
     .join("");
   const sel = $("#task-assignee");
   const cur = sel.value;
-  sel.innerHTML = `<option value="">nepřiřazeno</option>` + S.state.participants.map((p) => `<option>${esc(p.name)}</option>`).join("");
+  sel.innerHTML = `<option value="">unassigned</option>` + S.state.participants.map((p) => `<option>${esc(p.name)}</option>`).join("");
   sel.value = cur;
 }
 
@@ -163,63 +169,68 @@ function renderTodo() {
   const cards = [];
   for (const q of qs) {
     cards.push(`<li class="card ${q.blocking ? "blocking" : ""}">
-      <div class="meta">Q${q.id} · ${esc(q.asked_by)} → ${q.target ? "tobě" : "komukoli"} · <button class="link" data-open-thread="${q.thread_id}">T${q.thread_id}</button>${q.blocking ? " · <strong>blokuje práci</strong>" : ""}</div>
+      <div class="meta">Q${q.id} · ${esc(q.asked_by)} → ${q.target ? "you" : "anyone"} · <button class="link" data-open-thread="${q.thread_id}">T${q.thread_id}</button>${q.blocking ? " · <strong>blocking</strong>" : ""}</div>
       <div class="body">${rich(q.body)}</div>
       <form class="answer-form" data-qid="${q.id}">
         ${q.options.length ? `<div class="row">${q.options.map((o, i) => `<button type="button" class="small" data-choice="${esc(String.fromCharCode(65 + i) + ") " + o)}">${String.fromCharCode(65 + i)}) ${esc(o)}</button>`).join("")}</div>` : ""}
-        <textarea name="body" rows="2" placeholder="${q.options.length ? "Volitelně doplň…" : "Tvoje odpověď…"}"></textarea>
-        <div class="row"><button class="primary small">Odpovědět</button><button type="button" class="ghost small" data-cancel="${q.id}">Zrušit otázku</button></div>
+        <textarea name="body" rows="2" placeholder="${q.options.length ? "Optional note…" : "Your answer…"}"></textarea>
+        <div class="row"><button class="primary small">Answer</button><button type="button" class="ghost small" data-cancel="${q.id}">Dismiss</button></div>
       </form></li>`);
   }
   for (const t of paused) {
     if (qs.some((q) => q.thread_id === t.id)) continue;
-    cards.push(`<li class="card blocking"><div class="meta">T${t.id} pozastaveno</div>
-      <h3>${esc(t.title)}</h3><div class="body">${esc(t.status_reason || "Agenti potřebují tvůj vstup.")}</div>
-      <div class="row"><button class="small" data-open-thread="${t.id}">Otevřít</button><button class="small" data-resume="${t.id}">Nech je pokračovat</button></div></li>`);
+    cards.push(`<li class="card blocking"><div class="meta">T${t.id} paused</div>
+      <h3>${esc(t.title)}</h3><div class="body">${esc(t.status_reason || "The agents need your input.")}</div>
+      <div class="row"><button class="small" data-open-thread="${t.id}">Open</button><button class="small" data-resume="${t.id}">Let them continue</button></div></li>`);
   }
-  $("#todo").innerHTML = cards.length ? `<ul class="cards">${cards.join("")}</ul>` : `<p class="muted">Nic na tebe nečeká. Agenti pracují sami.</p>`;
+  $("#todo").innerHTML = cards.length ? `<ul class="cards">${cards.join("")}</ul>` : `<p class="muted">Nothing waiting for you. The agents are working.</p>`;
 }
 
 function renderKnowledge(rows) {
-  const trust = { human: "potvrdil člověk", evidence: "podloženo", agent: "tvrzení agenta" };
+  const trust = { human: "confirmed by you", evidence: "backed by evidence", agent: "agent claim" };
   $("#knowledge").innerHTML = rows.length
     ? rows
         .map(
           (k) => `<li class="card ${k.status}">
         <div class="meta">K${k.id} · ${esc(k.kind)} · <span class="trust ${k.trust}">${trust[k.trust]}</span>${k.author ? " · " + esc(k.author) : ""}</div>
         <h3>${esc(k.title)}</h3><div class="body">${rich(k.body)}</div>
-        ${k.status === "disputed" ? `<div class="meta">⚠ zpochybněno: ${esc(k.status_note)}</div>` : ""}
-        <div class="row">${k.trust !== "human" ? `<button class="small" data-verify="${k.id}">Potvrdit</button>` : ""}
-        ${k.status !== "disputed" ? `<button class="ghost small" data-dispute="${k.id}">Zpochybnit</button>` : ""}
-        ${k.source_message_id ? `<span class="chip">z M${k.source_message_id}</span>` : ""}</div></li>`,
+        ${k.status === "disputed" ? `<div class="meta">⚠ disputed: ${esc(k.status_note)}</div>` : ""}
+        <div class="row">${k.trust !== "human" ? `<button class="small" data-verify="${k.id}">Confirm</button>` : ""}
+        ${k.status !== "disputed" ? `<button class="ghost small" data-dispute="${k.id}">Dispute</button>` : ""}
+        ${k.source_message_id ? `<span class="chip">from M${k.source_message_id}</span>` : ""}</div></li>`,
         )
         .join("")
-    : `<li class="muted small">Paměť je zatím prázdná. Plní se odpověďmi na otázky a rozhodnutími.</li>`;
+    : `<li class="muted small">Memory is empty. It fills with answers and decisions.</li>`;
 }
 
 function renderTasks() {
   const order = ["doing", "review", "blocked", "todo", "done"];
-  const label = { todo: "k udělání", doing: "pracuje se", review: "ke kontrole", done: "hotovo", blocked: "blokováno" };
   $("#tasks").innerHTML = S.state.tasks.length
     ? S.state.tasks
         .map(
-          (t) => `<li class="card"><div class="meta">#${t.id} · ${label[t.status]}${t.assignee ? " · " + esc(t.assignee) : ""}${t.thread_id ? ` · <button class="link" data-open-thread="${t.thread_id}">T${t.thread_id}</button>` : ""}</div>
+          (t) => `<li class="card"><div class="meta">#${t.id} · ${TASK[t.status]}${t.assignee ? " · " + esc(t.assignee) : ""}${t.created_by && t.created_by !== t.assignee ? " · requested by " + esc(t.created_by) : ""}${t.thread_id ? ` · <button class="link" data-open-thread="${t.thread_id}">T${t.thread_id}</button>` : ""}</div>
         <h3>${esc(t.title)}</h3>${t.details ? `<div class="body">${esc(t.details)}</div>` : ""}
-        <div class="row"><select data-task-status="${t.id}" aria-label="Stav úkolu">${order.map((s) => `<option value="${s}" ${s === t.status ? "selected" : ""}>${label[s]}</option>`).join("")}</select></div></li>`,
+        <div class="row"><select data-task-status="${t.id}" aria-label="Task status">${order.map((s) => `<option value="${s}" ${s === t.status ? "selected" : ""}>${TASK[s]}</option>`).join("")}</select></div></li>`,
         )
         .join("")
-    : `<li class="muted small">Žádné úkoly.</li>`;
+    : `<li class="muted small">No tasks yet.</li>`;
 }
 
-function renderClaims() {
+function renderAreas() {
+  const areas = S.state.areas || [];
+  $("#areas").innerHTML = areas.length
+    ? areas
+        .map((a) => `<li class="card"><h3>${esc(a.owner)}</h3><div class="body">${a.paths.map((p) => `<code>${esc(p)}</code>`).join(" ")}</div>${a.description ? `<div class="meta">${esc(a.description)}</div>` : ""}${a.rules ? `<div class="meta">rules: ${esc(a.rules)}</div>` : ""}</li>`)
+        .join("")
+    : `<li class="muted small">No areas yet. Agents take one when they start.</li>`;
   $("#claims").innerHTML = S.state.claims.length
     ? S.state.claims
         .map((c) => {
           const mins = Math.max(0, Math.round((Date.parse(c.expires_at) - Date.now()) / 60000));
-          return `<li class="card"><h3><code>${esc(c.path)}</code></h3><div class="meta">${esc(c.holder)} · vyprší za ${mins} min</div>${c.reason ? `<div class="body">${esc(c.reason)}</div>` : ""}</li>`;
+          return `<li class="card"><h3><code>${esc(c.path)}</code></h3><div class="meta">${esc(c.holder)} · ${mins} min left</div>${c.reason ? `<div class="body">${esc(c.reason)}</div>` : ""}</li>`;
         })
         .join("")
-    : `<li class="muted small">Nikdo nic nezamyká.</li>`;
+    : `<li class="muted small">Nobody is editing right now.</li>`;
 }
 
 // ------------------------------------------------------------------ thread view
@@ -252,24 +263,25 @@ function renderThreadHead() {
   const max = S.state?.config.maxAgentStreak ?? 12;
   const s = $("#streak");
   s.hidden = t.agent_streak === 0 || t.status !== "open";
-  s.textContent = `Agenti si vyměnili ${t.agent_streak}/${max} zpráv od tvého posledního zásahu – pak se vlákno samo pozastaví.`;
+  s.textContent = `Agents exchanged ${t.agent_streak}/${max} messages since you last wrote – then the thread pauses for you.`;
   s.classList.toggle("high", t.agent_streak >= max * 0.7);
 }
 
 function messageHtml(m) {
   if (m.kind === "system") return `<li class="msg system" id="m${m.id}">${esc(m.body)}</li>`;
-  const cls = ["msg", m.author_kind, m.mentions.includes(S.me) ? "mentions-me" : ""].join(" ");
-  const ev = m.evidence.length || m.evidence_status === "missing"
-    ? `<span class="ev ${m.evidence_status}">${EV[m.evidence_status] || ""}</span>${m.evidence.map((e) => `<span class="chip" title="${esc(e.quote || e.output || "")}">${esc(evidenceLabel(e))}</span>`).join("")}`
-    : "";
+  const cls = ["msg", m.author_kind, m.mentions.includes(S.me) ? "mentions-me" : "", m.meta && m.meta.type ? "notice" : ""].join(" ");
+  const ev =
+    m.evidence.length || m.evidence_status === "missing"
+      ? `<span class="ev ${m.evidence_status}">${EV[m.evidence_status] || ""}</span>${m.evidence.map((e) => `<span class="chip" title="${esc(e.quote || e.output || "")}">${esc(evidenceLabel(e))}</span>`).join("")}`
+      : "";
   return `<li class="${cls}" id="m${m.id}">
     <div class="msg-head"><span class="msg-author">${esc(m.author)}</span>
       ${KIND[m.kind] ? `<span class="kind ${m.kind}">${KIND[m.kind]}</span>` : ""}
       ${m.confidence ? `<span class="chip">${CONF[m.confidence]}</span>` : ""}
       ${m.reply_to ? `<button class="link" data-jump="${m.reply_to}">↩ M${m.reply_to}</button>` : ""}
-      <span class="msg-id">M${m.id}</span><span class="msg-time">${time(m.created_at)}</span></div>
+      <span class="msg-id">M${m.id}</span> <span class="msg-time">${time(m.created_at)}</span></div>
     <div class="msg-body">${rich(m.body)}</div>
-    <div class="msg-foot">${ev}<button class="link" data-reply="${m.id}">odpovědět</button></div>
+    <div class="msg-foot">${ev}<button class="link" data-reply="${m.id}">reply</button></div>
   </li>`;
 }
 
@@ -281,10 +293,10 @@ function scrollBottom() {
 function renderReplyTo() {
   const el = $("#reply-to");
   el.hidden = !S.replyTo;
-  el.innerHTML = S.replyTo ? `Odpověď na M${S.replyTo} <button class="link" id="clear-reply">zrušit</button>` : "";
+  el.innerHTML = S.replyTo ? `Replying to M${S.replyTo} <button class="link" id="clear-reply">cancel</button>` : "";
 }
 
-// ------------------------------------------------------------------ live updates (SSE)
+// ------------------------------------------------------------------ live updates (SSE over fetch)
 
 let refreshTimer = null;
 function scheduleRefresh() {
@@ -298,6 +310,7 @@ async function connect() {
   for (let delay = 1000; ; delay = Math.min(delay * 2, 30000)) {
     try {
       const res = await fetch("/api/events", { headers: { authorization: "Bearer " + S.key, "x-ruch-name": encodeURIComponent(S.me) } });
+      if (res.status === 401) return showLanding("This room no longer exists.");
       if (!res.ok || !res.body) throw new Error("HTTP " + res.status);
       conn.classList.add("on");
       delay = 1000;
@@ -333,13 +346,14 @@ function onEvent(type, d) {
     }
     if (d.mentions.includes(S.me) && d.author !== S.me && document.hidden) notify(`${d.author}: ${d.body.slice(0, 120)}`);
   } else if (type === "thread") {
+    if (d.deleted) return showLanding("This room was deleted.");
     if (S.thread && d.id === S.threadId) {
       S.thread.thread = d;
       renderThreadHead();
     }
-    if (d.status === "human_needed" && document.hidden) notify(`Vlákno T${d.id} čeká na tebe: ${d.title}`);
+    if (d.status === "human_needed" && document.hidden) notify(`T${d.id} is waiting for you: ${d.title}`);
   } else if (type === "question" && d.status === "open" && (d.target === S.me || d.target === null) && document.hidden) {
-    notify(`Otázka od ${d.asked_by}: ${d.body.slice(0, 120)}`);
+    notify(`Question from ${d.asked_by}: ${d.body.slice(0, 120)}`);
   }
   if (type !== "hello") scheduleRefresh();
 }
@@ -359,6 +373,8 @@ function showPane(name) {
 // ------------------------------------------------------------------ events
 
 function bind() {
+  if (S.bound) return;
+  S.bound = true;
   $(".mobile-tabs").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-pane]");
     if (b) showPane(b.dataset.pane);
@@ -376,12 +392,12 @@ function bind() {
     const t = e.target.closest("[data-open-thread],[data-resume],[data-verify],[data-dispute],[data-cancel],[data-reply],[data-jump],#clear-reply,[data-choice]");
     if (!t) return;
     if (t.dataset.openThread) act(() => openThread(Number(t.dataset.openThread)));
-    else if (t.dataset.resume) act(async () => { await api("POST", `/api/threads/${t.dataset.resume}/status`, { status: "open", reason: "pokračujte" }); toast("Agenti mohou pokračovat."); });
-    else if (t.dataset.verify) act(async () => { await api("POST", `/api/knowledge/${t.dataset.verify}/verify`); toast("Potvrzeno."); });
+    else if (t.dataset.resume) act(async () => { await api("POST", `/api/threads/${t.dataset.resume}/status`, { status: "open", reason: "go ahead" }); toast("The agents can continue."); });
+    else if (t.dataset.verify) act(async () => { await api("POST", `/api/knowledge/${t.dataset.verify}/verify`); toast("Confirmed."); });
     else if (t.dataset.dispute) {
-      const reason = prompt("Co je na tom špatně?");
+      const reason = prompt("What's wrong with it?");
       if (reason) act(() => api("POST", `/api/knowledge/${t.dataset.dispute}/dispute`, { reason }));
-    } else if (t.dataset.cancel) act(() => api("POST", `/api/questions/${t.dataset.cancel}/cancel`, { reason: "zrušil člověk" }));
+    } else if (t.dataset.cancel) act(() => api("POST", `/api/questions/${t.dataset.cancel}/cancel`, { reason: "dismissed by the human" }));
     else if (t.dataset.reply) { S.replyTo = Number(t.dataset.reply); renderReplyTo(); $("#composer-text").focus(); }
     else if (t.dataset.jump) $("#m" + t.dataset.jump)?.scrollIntoView({ behavior: "smooth", block: "center" });
     else if (t.id === "clear-reply") { S.replyTo = null; renderReplyTo(); }
@@ -389,7 +405,7 @@ function bind() {
       const form = t.closest("form");
       act(async () => {
         await api("POST", `/api/questions/${form.dataset.qid}/answer`, { choice: t.dataset.choice, body: form.body.value });
-        toast("Odpovězeno – uloženo do paměti.");
+        toast("Answered – saved to memory.");
       });
     }
   });
@@ -398,10 +414,10 @@ function bind() {
     const form = e.target.closest(".answer-form");
     if (!form) return;
     e.preventDefault();
-    if (!form.body.value.trim()) return toast("Napiš odpověď nebo vyber možnost.", true);
+    if (!form.body.value.trim()) return toast("Write an answer or pick an option.", true);
     act(async () => {
       await api("POST", `/api/questions/${form.dataset.qid}/answer`, { body: form.body.value });
-      toast("Odpovězeno – uloženo do paměti.");
+      toast("Answered – saved to memory.");
     });
   });
 
@@ -416,21 +432,18 @@ function bind() {
     }
   });
 
-  $("#btn-pause").addEventListener("click", () => act(() => api("POST", `/api/threads/${S.threadId}/status`, { status: "human_needed", reason: "pozastavil člověk" })));
+  $("#btn-pause").addEventListener("click", () => act(() => api("POST", `/api/threads/${S.threadId}/status`, { status: "human_needed", reason: "paused by the human" })));
   $("#btn-resume").addEventListener("click", () => act(() => api("POST", `/api/threads/${S.threadId}/status`, { status: "open", reason: "" })));
   $("#btn-resolve").addEventListener("click", () => {
-    const reason = prompt("Krátké shrnutí výsledku (nepovinné):", S.thread?.thread.summary || "");
+    const reason = prompt("Short summary of the result (optional):", S.thread?.thread.summary || "");
     if (reason !== null) act(() => api("POST", `/api/threads/${S.threadId}/status`, { status: "resolved", reason }));
   });
-  $("#btn-save-summary").addEventListener("click", () =>
-    act(async () => { await api("POST", `/api/threads/${S.threadId}/summary`, { summary: $("#summary-text").value }); toast("Shrnutí uloženo."); }),
-  );
+  $("#btn-save-summary").addEventListener("click", () => act(async () => { await api("POST", `/api/threads/${S.threadId}/summary`, { summary: $("#summary-text").value }); toast("Summary saved."); }));
 
   $("#btn-new-thread").addEventListener("click", () => $("#dlg-thread").showModal());
   $("#dlg-thread").addEventListener("close", () => {
-    const dlg = $("#dlg-thread");
     const f = $("#thread-form");
-    if (dlg.returnValue !== "ok") return f.reset();
+    if ($("#dlg-thread").returnValue !== "ok") return f.reset();
     act(async () => {
       const r = await api("POST", "/api/threads", { title: f.title.value, body: f.body.value || undefined });
       f.reset();
@@ -440,11 +453,12 @@ function bind() {
     });
   });
 
+  const closeMenu = () => $(".menu").removeAttribute("open");
   $("#btn-brief").addEventListener("click", () => {
+    closeMenu();
     const f = $("#brief-form");
-    const p = S.state.project;
-    f.name.value = p.name;
-    f.brief.value = p.brief;
+    f.name.value = S.state.project.name;
+    f.brief.value = S.state.project.brief;
     $("#dlg-brief").showModal();
   });
   $("#dlg-brief").addEventListener("close", () => {
@@ -452,8 +466,30 @@ function bind() {
     const f = $("#brief-form");
     act(async () => {
       await api("PATCH", "/api/project", { name: f.name.value, brief: f.brief.value });
-      toast("Zadání uloženo.");
+      toast("Brief saved.");
       await loadState();
+    });
+  });
+  $("#btn-export").addEventListener("click", () => {
+    closeMenu();
+    act(async () => {
+      const res = await fetch("/api/export", { headers: { authorization: "Bearer " + S.key } });
+      if (!res.ok) throw new Error("Export failed.");
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(await res.blob());
+      a.download = `ruch-${S.state.project.name.replace(/[^\w-]+/g, "-")}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+  });
+  $("#btn-delete").addEventListener("click", () => {
+    closeMenu();
+    const name = S.state.project.name;
+    if (prompt(`This permanently deletes the room and everything in it.\nType the room name to confirm: ${name}`) !== name) return;
+    act(async () => {
+      await api("DELETE", "/api/room");
+      forgetRoom(S.key);
+      location.href = "/";
     });
   });
 
@@ -475,7 +511,7 @@ function bind() {
     act(async () => {
       await api("POST", "/api/knowledge", { kind: f.kind.value, title: f.title.value, body: f.body.value });
       f.reset();
-      toast("Uloženo do paměti.");
+      toast("Saved to memory.");
     });
   });
   $("#task-form").addEventListener("submit", (e) => {
@@ -493,7 +529,7 @@ function bind() {
 
   $("#btn-invite").addEventListener("click", () => {
     const link = `${location.origin}/j/${S.agentCode}`;
-    $("#invite-text").value = `Připoj se do R.U.Ch. (chat AI agentů na tomto projektu): ${link}\nPostupuj podle instrukcí na tom odkazu. Jméno si zvol krátké, bez mezer.`;
+    $("#invite-text").value = `Join R.U.Ch. (the chat room for the AI agents on this project): ${link}\nFollow the instructions at that link. Pick a short name without spaces.`;
     $("#invite-mcp").value = `${location.origin}/mcp?code=${S.agentCode}&name=ChatGPT`;
     $("#invite-code").textContent = S.agentCode;
     $("#dlg-invite").showModal();
@@ -502,14 +538,14 @@ function bind() {
     const b = e.target.closest("[data-copy],[data-copy-owner]");
     if (!b) return;
     const text = b.dataset.copy ? $("#" + b.dataset.copy).value : `${location.origin}/#o=${S.key}`;
-    navigator.clipboard?.writeText(text).then(() => toast("Zkopírováno."), () => toast("Kopírování selhalo – označ text ručně.", true));
+    navigator.clipboard?.writeText(text).then(() => toast("Copied."), () => toast("Copy failed – select the text manually.", true));
   });
   $("#btn-rotate").addEventListener("click", () => {
-    if (!confirm("Vygenerovat nový kód? Agenti se starým kódem se už nepřipojí.")) return;
+    if (!confirm("Generate a new code? Agents with the old code can no longer connect.")) return;
     act(async () => {
       S.agentCode = (await api("POST", "/api/room/rotate")).agent_code;
       $("#btn-invite").click();
-      toast("Nový kód je aktivní.");
+      toast("The new code is active.");
     });
   });
 
@@ -529,7 +565,7 @@ async function sendMessage() {
     if (kind === "decision") {
       const title = body.split("\n")[0].slice(0, 200);
       await api("POST", "/api/knowledge", { kind: "decision", title, body, evidence: [{ type: "message", id: r.message.id }] });
-      toast("Rozhodnutí uloženo do paměti – agenti ho uvidí.");
+      toast("Decision saved to memory – the agents will see it.");
     }
     for (const w of r.warnings || []) toast(w, true);
     ta.value = "";
@@ -539,17 +575,16 @@ async function sendMessage() {
   });
 }
 
-// ------------------------------------------------------------------ boot
-
 // ------------------------------------------------------------------ landing
 
 function showLanding(error) {
   $("#landing").hidden = false;
   $(".topbar").hidden = true;
   $(".layout").hidden = true;
+  if (location.hash) history.replaceState(null, "", "/");
   const list = rooms();
   $("#my-rooms").innerHTML = list.length
-    ? `<h2>Moje místnosti</h2><ul class="room-list">${list.map((r) => `<li><a href="/#o=${esc(r.key)}"><span>${esc(r.name)}</span><span class="muted small">${new Date(r.at).toLocaleDateString("cs")}</span></a></li>`).join("")}</ul>`
+    ? `<h2>My rooms</h2><ul class="room-list">${list.map((r) => `<li><a href="/#o=${esc(r.key)}"><span>${esc(r.name)}</span><span class="muted small">${new Date(r.at).toLocaleDateString()}</span></a></li>`).join("")}</ul>`
     : "";
   if (error) toast(error, true);
   $("#create-form").onsubmit = (e) => {
@@ -583,11 +618,10 @@ async function openRoom(key) {
   showPane("threads");
   await loadState();
   connect();
-  if (window.innerWidth > 860) {
-    const first = S.state.threads.find((t) => t.status === "human_needed") || S.state.threads[0];
-    if (first) await openThread(first.id);
-  }
-  if (!S.state.threads.length) $("#btn-invite").click();
+  const waiting = S.state.threads.find((t) => t.status === "human_needed");
+  const onlyCoordination = S.state.threads.length <= 1 && (S.state.threads[0]?.message_count ?? 0) <= 1;
+  if (onlyCoordination) $("#btn-invite").click();
+  else if (window.innerWidth > 860) await openThread((waiting || S.state.threads.find((t) => t.id === S.state.coordination_thread) || S.state.threads[0]).id);
 }
 
 (async function boot() {
@@ -597,9 +631,9 @@ async function openRoom(key) {
     await openRoom(m[1]);
   } catch (e) {
     if (e.code === "bad_key") {
-      save("ruch.rooms", JSON.stringify(rooms().filter((r) => r.key !== m[1])));
-      return showLanding("Tahle místnost neexistuje (mohla být smazána po 30 dnech nečinnosti).");
+      forgetRoom(m[1]);
+      return showLanding("This room doesn't exist (it may have been deleted after 30 days of inactivity).");
     }
-    toast("Nepodařilo se připojit k hubu: " + e.message, true);
+    toast("Can't reach the hub: " + e.message, true);
   }
 })();
