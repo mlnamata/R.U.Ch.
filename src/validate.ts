@@ -6,26 +6,26 @@ export type V<T> = (v: unknown, path: string) => T;
 
 export class ValidationError extends Error {}
 const fail = (path: string, msg: string): never => {
-  throw new ValidationError(`${path || "(tělo)"}: ${msg}`);
+  throw new ValidationError(`${path || "(body)"}: ${msg}`);
 };
 
 export const str =
   (opts: { max?: number; min?: number } = {}): V<string> =>
   (v, p) => {
-    if (typeof v !== "string") return fail(p, "očekáván text");
-    if (opts.min !== undefined && v.length < opts.min) fail(p, `min. ${opts.min} znaků`);
-    if (opts.max !== undefined && v.length > opts.max) fail(p, `max. ${opts.max} znaků`);
+    if (typeof v !== "string") return fail(p, "expected string");
+    if (opts.min !== undefined && v.length < opts.min) fail(p, `min ${opts.min} chars`);
+    if (opts.max !== undefined && v.length > opts.max) fail(p, `max ${opts.max} chars`);
     return v;
   };
 export const int =
   (opts: { min?: number; max?: number } = {}): V<number> =>
   (v, p) => {
-    if (typeof v !== "number" || !Number.isInteger(v)) return fail(p, "očekáváno celé číslo");
+    if (typeof v !== "number" || !Number.isInteger(v)) return fail(p, "expected integer");
     if (opts.min !== undefined && v < opts.min) fail(p, `min. ${opts.min}`);
     if (opts.max !== undefined && v > opts.max) fail(p, `max. ${opts.max}`);
     return v;
   };
-export const bool: V<boolean> = (v, p) => (typeof v === "boolean" ? v : fail(p, "očekáváno true/false"));
+export const bool: V<boolean> = (v, p) => (typeof v === "boolean" ? v : fail(p, "expected true/false"));
 export const oneOf =
   <T extends string>(...values: T[]): V<T> =>
   (v, p) =>
@@ -33,9 +33,9 @@ export const oneOf =
 export const arr =
   <T>(item: V<T>, opts: { min?: number; max?: number } = {}): V<T[]> =>
   (v, p) => {
-    if (!Array.isArray(v)) return fail(p, "očekáván seznam");
-    if (opts.min !== undefined && v.length < opts.min) fail(p, `min. ${opts.min} položek`);
-    if (opts.max !== undefined && v.length > opts.max) fail(p, `max. ${opts.max} položek`);
+    if (!Array.isArray(v)) return fail(p, "expected array");
+    if (opts.min !== undefined && v.length < opts.min) fail(p, `min ${opts.min} items`);
+    if (opts.max !== undefined && v.length > opts.max) fail(p, `max ${opts.max} items`);
     return v.map((x, i) => item(x, `${p}[${i}]`));
   };
 export const opt =
@@ -59,7 +59,7 @@ export type Infer<S extends Shape> = { [K in keyof S]: ReturnType<S[K]> };
 export const obj =
   <S extends Shape>(shape: S): V<Infer<S>> =>
   (v, p) => {
-    if (typeof v !== "object" || v === null || Array.isArray(v)) return fail(p, "očekáván objekt");
+    if (typeof v !== "object" || v === null || Array.isArray(v)) return fail(p, "expected object");
     const out: Record<string, unknown> = {};
     for (const [k, check] of Object.entries(shape)) {
       const r = check((v as Record<string, unknown>)[k], p ? `${p}.${k}` : k);

@@ -242,7 +242,7 @@ export class Hub {
 
   projectById(id: number): Project {
     const p = this.one<Project>("SELECT id, name, brief, code_rotation, created_at, last_active_at FROM projects WHERE id = ?", id);
-    if (!p) throw new HubError(404, "room_not_found", "Místnost neexistuje.");
+    if (!p) throw new HubError(404, "room_not_found", "Room does not exist.");
     return p;
   }
 
@@ -274,7 +274,7 @@ export class Hub {
 
   /** New agent code; the old one stops working immediately. */
   rotateAgentCode(by: Participant, ownerKey: string): string {
-    this.requireHuman(by, "měnit kód místnosti");
+    this.requireHuman(by, "change the room code");
     const p = this.projectById(by.project_id);
     const code = deriveAgentCode(ownerKey, p.code_rotation + 1);
     this.run("UPDATE projects SET code_rotation = code_rotation + 1, agent_key_hash = ? WHERE id = ?", hashKey(code), p.id);
@@ -282,7 +282,7 @@ export class Hub {
   }
 
   updateProject(by: Participant, patch: { name?: string; brief?: string }): Project {
-    this.requireHuman(by, "měnit zadání projektu");
+    this.requireHuman(by, "change the project brief");
     const p = this.projectById(by.project_id);
     this.run(
       "UPDATE projects SET name = ?, brief = ? WHERE id = ?",
@@ -314,15 +314,15 @@ export class Hub {
   join(projectId: number, name: string, kind: ParticipantKind, role?: string): Participant {
     const clean = name.trim();
     if (!/^[\p{L}\p{N}_.-]{1,40}$/u.test(clean)) {
-      throw new HubError(400, "bad_name", "Jméno smí obsahovat jen písmena, čísla, _ . - (max 40 znaků, bez mezer).");
+      throw new HubError(400, "bad_name", "Name: letters, digits, _ . - only (max 40, no spaces).");
     }
     const lower = clean.toLowerCase();
     if (ALL_ALIASES.has(lower) || (kind === "agent" && HUMAN_ALIASES.has(lower))) {
-      throw new HubError(400, "reserved_name", `Jméno "${clean}" je rezervované.`);
+      throw new HubError(400, "reserved_name", `Name "${clean}" is reserved.`);
     }
     let p = this.one<Participant>("SELECT * FROM participants WHERE project_id = ? AND name = ?", projectId, clean);
     if (p && p.kind !== kind) {
-      throw new HubError(409, "name_taken", `Jméno "${clean}" už používá ${p.kind === "human" ? "člověk" : "agent"}.`);
+      throw new HubError(409, "name_taken", `Name "${clean}" is taken by ${p.kind === "human" ? "the human" : "an agent"}.`);
     }
     if (!p) {
       const r = this.run(
@@ -387,7 +387,7 @@ export class Hub {
   }
 
   private requireHuman(by: Participant, what: string) {
-    if (by.kind !== "human") throw new HubError(403, "human_only", `Jen člověk může ${what}.`);
+    if (by.kind !== "human") throw new HubError(403, "human_only", `Only the human can ${what}.`);
   }
 
   private resolveName(projectId: number, name: string): Participant[] {
@@ -407,13 +407,13 @@ export class Hub {
 
   private threadIn(id: number, projectId: number): Thread {
     const t = this.one<Thread>("SELECT * FROM threads WHERE id = ? AND project_id = ?", id, projectId);
-    if (!t) throw new HubError(404, "thread_not_found", `Vlákno T${id} neexistuje.`);
+    if (!t) throw new HubError(404, "thread_not_found", `T${id} does not exist.`);
     return t;
   }
 
   createThread(by: Participant, input: { title: string; body?: string; parent_id?: number | null; mentions?: string[] }) {
     const title = input.title.trim().slice(0, 200);
-    if (!title) throw new HubError(400, "bad_title", "Vlákno musí mít název.");
+    if (!title) throw new HubError(400, "bad_title", "A thread needs a title.");
     if (input.parent_id) this.threadIn(input.parent_id, by.project_id);
     const r = this.run(
       "INSERT INTO threads (project_id, parent_id, title, created_by) VALUES (?, ?, ?, ?)",
@@ -457,10 +457,10 @@ export class Hub {
   setThreadStatus(by: Participant, id: number, status: ThreadStatus, reason = ""): Thread {
     const t = this.threadIn(id, by.project_id);
     if (by.kind === "agent" && t.status === "human_needed" && status !== "human_needed") {
-      throw new HubError(423, "waiting_for_human", "Vlákno čeká na člověka – agent ho nemůže znovu otevřít.");
+      throw new HubError(423, "waiting_for_human", "Thread waits for the human – an agent cannot reopen it.");
     }
     if (by.kind === "agent" && status === "resolved" && !reason.trim()) {
-      throw new HubError(400, "summary_required", "Při uzavření vlákna napiš shrnutí výsledku.");
+      throw new HubError(400, "summary_required", "Resolving a thread needs a summary of the outcome.");
     }
     this.tx(() => {
       this.run(
@@ -528,7 +528,7 @@ export class Hub {
     const t = Date.now();
     const list = (this.recentPosts.get(by.id) ?? []).filter((x) => t - x < 60_000);
     if (list.length >= this.config.maxMessagesPerMinute) {
-      throw new HubError(429, "rate_limited", `Posíláš příliš mnoho zpráv (${this.config.maxMessagesPerMinute}/min). Zpomal a shrň myšlenky do jedné zprávy.`);
+      throw new HubError(429, "rate_limited", `Too many messages (${this.config.maxMessagesPerMinute}/min). Slow down, put it in one message.`);
     }
     list.push(t);
     this.recentPosts.set(by.id, list);
@@ -547,7 +547,7 @@ export class Hub {
       throw new HubError(
         422,
         "evidence_invalid",
-        "Zpráva odmítnuta: citované důkazy neodpovídají realitě. Ověř fakta (načti soubor / dohledej ID) a pošli znovu.\n" +
+        "Rejected: the evidence does not match reality. Verify (read the file / look up the id) and resend.\n" +
           bad.map((b) => `- ${b.note}`).join("\n"),
         bad,
       );
@@ -558,10 +558,10 @@ export class Hub {
   /** Post a message. All anti-loop and anti-hallucination guards live here. */
   post(by: Participant, threadId: number, input: PostInput): PostResult {
     const kind: MessageKind = input.kind ?? "chat";
-    if (kind === "system") throw new HubError(400, "bad_kind", "Systémové zprávy posílá jen hub.");
+    if (kind === "system") throw new HubError(400, "bad_kind", "Only the hub posts system messages.");
     const body = input.body.trim();
-    if (!body) throw new HubError(400, "empty", "Prázdná zpráva.");
-    if (body.length > 20_000) throw new HubError(413, "too_long", "Zpráva je moc dlouhá (max 20 000 znaků). Pošli odkaz na soubor místo obsahu.");
+    if (!body) throw new HubError(400, "empty", "Empty message.");
+    if (body.length > 20_000) throw new HubError(413, "too_long", "Too long (max 20000 chars). Reference path:lines instead of pasting.");
     const thread = this.threadIn(threadId, by.project_id);
 
     if (by.kind === "agent") {
@@ -569,7 +569,7 @@ export class Hub {
         throw new HubError(
           423,
           "waiting_for_human",
-          `Vlákno T${threadId} čeká na člověka (${thread.status_reason || "bez důvodu"}). Nepiš sem, dokud neodpoví – dělej jinou práci nebo počkej.`,
+          `T${threadId} waits for the human${thread.status_reason ? ` (${thread.status_reason})` : ""}. Don't post there until they answer – do other work or wait.`,
         );
       }
       const recent = this.all<{ body: string; id: number }>(
@@ -581,7 +581,7 @@ export class Hub {
       const fp = fingerprint(body);
       if (fp.size >= 4) {
         const dup = recent.find((m) => similarity(fp, fingerprint(m.body)) >= 0.85);
-        if (dup) throw new HubError(409, "repetition", `Tohle jsi už poslal(a) (M${dup.id}). Neopakuj se – změň přístup, zeptej se nebo eskaluj.`);
+        if (dup) throw new HubError(409, "repetition", `You already said this (M${dup.id}). Change approach, ask or escalate.`);
       }
       this.checkRate(by);
     }
@@ -592,19 +592,19 @@ export class Hub {
     const mentionIds = new Set<number>();
     for (const n of names) {
       const found = this.resolveName(by.project_id, n);
-      if (found.length === 0) warnings.push(`@${n} není účastník – nikdo takový zprávu nedostane.`);
+      if (found.length === 0) warnings.push(`@${n} is not a participant – nobody gets that mention.`);
       for (const p of found) if (p.id !== by.id) mentionIds.add(p.id);
     }
 
     if (input.reply_to && !this.one("SELECT 1 FROM messages WHERE id = ? AND thread_id = ?", input.reply_to, threadId)) {
-      throw new HubError(400, "bad_reply", `Zpráva M${input.reply_to} v tomto vlákně neexistuje.`);
+      throw new HubError(400, "bad_reply", `M${input.reply_to} is not in this thread.`);
     }
 
     const evidence = input.evidence ?? [];
     const validated = this.validateEvidence(by.project_id, kind, evidence);
     // The human is the source of truth – their answers and decisions need no evidence.
     const status = by.kind === "human" && validated.status === "missing" ? "none" : validated.status;
-    if (status === "missing") warnings.push(`Zpráva typu "${kind}" nemá důkaz – v UI je označena jako neověřená.`);
+    if (status === "missing") warnings.push(`${kind} without evidence – shown to everyone as unproven.`);
 
     let systemNote: string | null = null;
     const message = this.tx(() => {
@@ -665,7 +665,7 @@ export class Hub {
     const updated = this.threadIn(threadId, by.project_id);
     this.emit(by.project_id, "message", message);
     if (updated.status !== thread.status || updated.agent_streak !== thread.agent_streak) this.emit(by.project_id, "thread", updated);
-    if (updated.status === "human_needed" && thread.status !== "human_needed") warnings.push("Vlákno bylo pozastaveno pojistkou proti zacyklení – čeká se na člověka.");
+    if (updated.status === "human_needed" && thread.status !== "human_needed") warnings.push("Thread paused by the loop guard – it waits for the human.");
     return { message, warnings, evidence_checks: validated.checks, thread: updated };
   }
 
@@ -730,11 +730,11 @@ export class Hub {
     by: Participant,
     input: { kind: KnowledgeKind; title: string; body: string; tags?: string; evidence?: Evidence[]; source_message_id?: number | null; supersedes?: number | null },
   ): Knowledge {
-    if (!input.title.trim() || !input.body.trim()) throw new HubError(400, "empty", "Znalost musí mít název i obsah.");
+    if (!input.title.trim() || !input.body.trim()) throw new HubError(400, "empty", "A memory entry needs a title and a body.");
     const evidence = input.evidence ?? [];
     const { status } = this.validateEvidence(by.project_id, "note", evidence);
     if (by.kind === "agent" && input.kind === "decision" && evidence.length === 0) {
-      throw new HubError(422, "evidence_required", "Rozhodnutí od agenta musí odkazovat na zdroj (např. zprávu, kde se na tom tým shodl, nebo odpověď člověka).");
+      throw new HubError(422, "evidence_required", "An agent's decision must cite its source (the message where the team agreed, or the human's answer).");
     }
     const trust: Trust = by.kind === "human" ? "human" : status === "verified" ? "evidence" : "agent";
     const k = this.tx(() => {
@@ -755,7 +755,7 @@ export class Hub {
       if (input.supersedes) {
         const old = this.getKnowledge(by.project_id, input.supersedes);
         if (old.trust === "human" && by.kind === "agent") {
-          throw new HubError(403, "human_knowledge", `K${old.id} potvrdil člověk – agent ji nemůže nahradit. Zeptej se člověka.`);
+          throw new HubError(403, "human_knowledge", `K${old.id} is human-confirmed – an agent cannot replace it. Ask the human.`);
         }
         this.run("UPDATE knowledge SET status = 'superseded', superseded_by = ?, updated_at = ? WHERE id = ?", id, now(), old.id);
       }
@@ -775,9 +775,9 @@ export class Hub {
   }
 
   disputeKnowledge(by: Participant, id: number, reason: string): Knowledge {
-    if (!reason.trim()) throw new HubError(400, "reason_required", "Uveď, proč je znalost špatně.");
+    if (!reason.trim()) throw new HubError(400, "reason_required", "Say why the entry is wrong.");
     const k0 = this.getKnowledge(by.project_id, id);
-    if (k0.status === "superseded") throw new HubError(409, "superseded", `K${id} už je nahrazená K${k0.superseded_by}.`);
+    if (k0.status === "superseded") throw new HubError(409, "superseded", `K${id} was already replaced by K${k0.superseded_by}.`);
     this.run("UPDATE knowledge SET status = 'disputed', status_note = ?, updated_at = ? WHERE id = ?", `${by.name}: ${reason.trim()}`.slice(0, 1000), now(), id);
     const k = this.getKnowledge(by.project_id, id);
     this.emit(by.project_id, "knowledge", k);
@@ -809,7 +809,7 @@ export class Hub {
 
   getQuestion(projectId: number, id: number): Question {
     const r = this.one<Row>(`${Q_SELECT} WHERE q.id = ? AND q.project_id = ?`, id, projectId);
-    if (!r) throw new HubError(404, "question_not_found", `Otázka Q${id} neexistuje.`);
+    if (!r) throw new HubError(404, "question_not_found", `Q${id} does not exist.`);
     return this.questionView(r);
   }
 
@@ -829,7 +829,7 @@ export class Hub {
 
   ask(by: Participant, input: { to?: string | null; body: string; thread_id?: number | null; options?: string[]; blocking?: boolean }) {
     const body = input.body.trim();
-    if (!body) throw new HubError(400, "empty", "Prázdná otázka.");
+    if (!body) throw new HubError(400, "empty", "Empty question.");
     let target: Participant | null = null;
     const to = input.to?.trim();
     if (to && !ALL_ALIASES.has(to.toLowerCase()) && !["anyone", "any", "kdokoli"].includes(to.toLowerCase())) {
@@ -838,11 +838,11 @@ export class Hub {
         throw new HubError(
           404,
           "unknown_participant",
-          `"${to}" není účastník. Dostupní: ${this.listParticipants(by.project_id).map((p) => p.name).join(", ")}`,
+          `"${to}" is not a participant. Present: ${this.listParticipants(by.project_id).map((p) => p.name).join(", ")}`,
         );
       }
       target = found[0];
-      if (target.id === by.id) throw new HubError(400, "self_question", "Nemůžeš se ptát sám sebe.");
+      if (target.id === by.id) throw new HubError(400, "self_question", "You cannot ask yourself.");
     }
     const options = (input.options ?? []).map((o) => o.trim()).filter(Boolean).slice(0, 6);
     const similar = this.searchKnowledge(by.project_id, body, 3);
@@ -872,13 +872,13 @@ export class Hub {
   answer(by: Participant, questionId: number, input: { body: string; confidence?: Confidence; evidence?: Evidence[]; choice?: string | null }) {
     const q = this.getQuestion(by.project_id, questionId);
     if (q.status !== "open") {
-      throw new HubError(409, "not_open", `Otázka Q${q.id} už je ${q.status === "answered" ? `zodpovězená (${q.answered_by})` : "zrušená"}.`);
+      throw new HubError(409, "not_open", `Q${q.id} is already ${q.status === "answered" ? `answered (${q.answered_by})` : "cancelled"}.`);
     }
-    if (q.asked_by === by.name) throw new HubError(400, "own_question", "Na vlastní otázku neodpovídej – zruš ji.");
+    if (q.asked_by === by.name) throw new HubError(400, "own_question", "Don't answer your own question – cancel it.");
     const confidence: Confidence = by.kind === "human" ? "certain" : (input.confidence ?? "likely");
     let body = input.body.trim();
     if (input.choice) body = `Volba: ${input.choice}${body ? `\n${body}` : ""}`;
-    if (!body) throw new HubError(400, "empty", "Prázdná odpověď.");
+    if (!body) throw new HubError(400, "empty", "Empty answer.");
     const posted = this.post(by, q.thread_id, {
       kind: "answer",
       body: `@${q.asked_by} ${body}`,
@@ -908,14 +908,14 @@ export class Hub {
     const question = this.getQuestion(by.project_id, q.id);
     this.emit(by.project_id, "question", question);
     const warnings = [...posted.warnings];
-    if (confidence === "guess") warnings.push("Odhad se neukládá do sdílené paměti.");
+    if (confidence === "guess") warnings.push("A guess is not stored in memory.");
     return { question, message: posted.message, warnings };
   }
 
   cancelQuestion(by: Participant, questionId: number, reason = "") {
     const q = this.getQuestion(by.project_id, questionId);
-    if (q.asked_by !== by.name && by.kind !== "human") throw new HubError(403, "not_owner", "Otázku může zrušit jen ten, kdo ji položil, nebo člověk.");
-    if (q.status !== "open") throw new HubError(409, "not_open", `Otázka Q${q.id} už není otevřená.`);
+    if (q.asked_by !== by.name && by.kind !== "human") throw new HubError(403, "not_owner", "Only the asker or the human can cancel a question.");
+    if (q.status !== "open") throw new HubError(409, "not_open", `Q${q.id} is not open.`);
     this.run("UPDATE questions SET status = 'cancelled', answered_at = ? WHERE id = ?", now(), q.id);
     this.insertSystem(by.project_id, q.thread_id, `${by.name} zrušil(a) otázku Q${q.id}${reason ? `: ${reason}` : ""}`);
     const question = this.getQuestion(by.project_id, q.id);
@@ -1037,7 +1037,7 @@ export class Hub {
 
   getTask(projectId: number, id: number): Task {
     const r = this.one<Row>("SELECT * FROM tasks WHERE id = ? AND project_id = ?", id, projectId);
-    if (!r) throw new HubError(404, "task_not_found", `Úkol #${id} neexistuje.`);
+    if (!r) throw new HubError(404, "task_not_found", `#${id} does not exist.`);
     return this.taskView(r);
   }
 
@@ -1061,11 +1061,11 @@ export class Hub {
   }
 
   createTask(by: Participant, input: { title: string; details?: string; assignee?: string | null; thread_id?: number | null }) {
-    if (!input.title.trim()) throw new HubError(400, "empty", "Úkol musí mít název.");
+    if (!input.title.trim()) throw new HubError(400, "empty", "A task needs a title.");
     let assigneeId: number | null = null;
     if (input.assignee) {
       const found = this.resolveName(by.project_id, input.assignee);
-      if (!found.length) throw new HubError(404, "unknown_participant", `"${input.assignee}" není účastník.`);
+      if (!found.length) throw new HubError(404, "unknown_participant", `"${input.assignee}" is not a participant.`);
       assigneeId = found[0].id;
     }
     if (input.thread_id) this.threadIn(input.thread_id, by.project_id);
@@ -1085,18 +1085,18 @@ export class Hub {
 
   updateTask(by: Participant, id: number, patch: { status?: TaskStatus; assignee?: string | null; details?: string; take?: boolean }) {
     const r = this.one<Row>("SELECT * FROM tasks WHERE id = ? AND project_id = ?", id, by.project_id);
-    if (!r) throw new HubError(404, "task_not_found", `Úkol #${id} neexistuje.`);
+    if (!r) throw new HubError(404, "task_not_found", `#${id} does not exist.`);
     let assigneeId = num(r.assignee_id);
     if (patch.take) {
       if (assigneeId !== null && assigneeId !== by.id && (r.status === "doing" || r.status === "review")) {
-        throw new HubError(409, "task_taken", `Úkol #${id} právě dělá ${this.nameOf(assigneeId)}. Domluv se, než ho převezmeš.`);
+        throw new HubError(409, "task_taken", `#${id} is being done by ${this.nameOf(assigneeId)}. Agree with them before taking it.`);
       }
       assigneeId = by.id;
     } else if (patch.assignee !== undefined) {
       if (patch.assignee === null) assigneeId = null;
       else {
         const found = this.resolveName(by.project_id, patch.assignee);
-        if (!found.length) throw new HubError(404, "unknown_participant", `"${patch.assignee}" není účastník.`);
+        if (!found.length) throw new HubError(404, "unknown_participant", `"${patch.assignee}" is not a participant.`);
         assigneeId = found[0].id;
       }
     }
@@ -1107,8 +1107,8 @@ export class Hub {
         409,
         r.status === "review" ? "self_review" : "review_required",
         r.status === "review"
-          ? "Vlastní práci nemůžeš schválit. Schválit musí jiný agent nebo člověk."
-          : `Úkol #${id} nejdřív přepni do "review" a nech ho zkontrolovat jiným agentem nebo člověkem.`,
+          ? "You cannot approve your own work. Another agent or the human must."
+          : `Move #${id} to review first; another agent or the human marks it done.`,
       );
     }
     this.run(
@@ -1147,35 +1147,37 @@ export class Hub {
     return this.isMember(m.thread_id, p.id, m.id);
   }
 
+  private static readonly RELEVANT = `m.project_id = ? AND m.id > ? AND (m.author_id IS NULL OR m.author_id != ?)
+      AND (? = 'human' OR p.kind = 'human' OR m.kind = 'decision'
+           OR EXISTS (SELECT 1 FROM thread_members tm WHERE tm.thread_id = m.thread_id AND tm.participant_id = ? AND tm.since_id <= m.id))`;
+  private static readonly Q_FOR = "q.project_id = ? AND q.status = 'open' AND (q.target_id = ? OR (q.target_id IS NULL AND (q.asked_by IS NULL OR q.asked_by != ?)))";
+
+  /** How many unseen messages and not-yet-announced questions wait for the participant. */
+  pending(p: Participant): number {
+    const me = this.one<{ inbox_cursor: number; q_cursor: number }>("SELECT inbox_cursor, q_cursor FROM participants WHERE id = ?", p.id)!;
+    const m = this.one<{ c: number }>(
+      `SELECT COUNT(*) AS c FROM messages m LEFT JOIN participants p ON p.id = m.author_id WHERE ${Hub.RELEVANT}`,
+      p.project_id,
+      me.inbox_cursor,
+      p.id,
+      p.kind,
+      p.id,
+    )!.c;
+    const q = this.one<{ c: number }>(`SELECT COUNT(*) AS c FROM questions q WHERE ${Hub.Q_FOR} AND q.id > ?`, p.project_id, p.id, p.id, me.q_cursor)!.c;
+    return m + q;
+  }
+
   /**
-   * Everything new and relevant since the participant's cursor, in one indexed query.
+   * Everything new and relevant since the participant's cursors.
    * Relevance: human messages, decisions, and threads the agent takes part in (from the moment it joined them).
+   * Standing state (open questions, tasks, locks, paused threads) is flagged in `changed` only when it differs
+   * from what this participant was last shown, so agents do not re-read it on every call.
    */
-  inbox(p: Participant, opts: { peek?: boolean } = {}) {
+  inbox(p: Participant, opts: { peek?: boolean; all?: boolean } = {}) {
     const me = this.one<Participant>("SELECT * FROM participants WHERE id = ?", p.id)!;
     const cursor = me.inbox_cursor;
     const limit = this.config.inboxLimit;
-    const rows =
-      me.kind === "human"
-        ? this.all<Row>(
-            `${MSG_SELECT} WHERE m.project_id = ? AND m.id > ? AND (m.author_id IS NULL OR m.author_id != ?) ORDER BY m.id LIMIT ?`,
-            me.project_id,
-            cursor,
-            me.id,
-            limit + 1,
-          )
-        : this.all<Row>(
-            `${MSG_SELECT}
-              WHERE m.project_id = ? AND m.id > ? AND (m.author_id IS NULL OR m.author_id != ?)
-                AND (p.kind = 'human' OR m.kind = 'decision'
-                     OR EXISTS (SELECT 1 FROM thread_members tm WHERE tm.thread_id = m.thread_id AND tm.participant_id = ? AND tm.since_id <= m.id))
-              ORDER BY m.id LIMIT ?`,
-            me.project_id,
-            cursor,
-            me.id,
-            me.id,
-            limit + 1,
-          );
+    const rows = this.all<Row>(`${MSG_SELECT} WHERE ${Hub.RELEVANT} ORDER BY m.id LIMIT ?`, me.project_id, cursor, me.id, me.kind, me.id, limit + 1);
     const more = rows.length > limit;
     const messages = rows.slice(0, limit).map((r) => this.messageView(r));
     const maxId = this.one<{ m: number | null }>("SELECT MAX(id) AS m FROM messages WHERE project_id = ?", me.project_id)?.m ?? cursor;
@@ -1188,52 +1190,72 @@ export class Hub {
       me.id,
     ).map((t) => ({ id: t.id, title: t.title, by: this.nameOf(t.created_by) }));
     const maxThread = this.one<{ m: number | null }>("SELECT MAX(id) AS m FROM threads WHERE project_id = ?", me.project_id)?.m ?? 0;
+    const maxQuestion = this.one<{ m: number | null }>("SELECT MAX(id) AS m FROM questions WHERE project_id = ?", me.project_id)?.m ?? 0;
 
     const myQuestions = this.all<Row>(
       `${Q_SELECT} WHERE q.asked_by = ? AND (q.status = 'open' OR q.answer_message_id > ?) ORDER BY q.id DESC LIMIT 20`,
       me.id,
       cursor,
     ).map((r) => this.questionView(r));
+    const forMe = this.listQuestions(me.project_id, { status: "open", for: me });
+    const paused = this.all<{ id: number; title: string; status_reason: string }>(
+      `SELECT t.id, t.title, t.status_reason FROM threads t WHERE t.project_id = ? AND t.status = 'human_needed'
+         AND (? = 'human' OR EXISTS (SELECT 1 FROM thread_members tm WHERE tm.thread_id = t.id AND tm.participant_id = ?))`,
+      me.project_id,
+      me.kind,
+      me.id,
+    ).map((t) => ({ id: t.id, title: t.title, reason: t.status_reason }));
+    const tasks = this.listTasks(me.project_id, { assignee: me, openOnly: true });
+    const claims = this.listClaims(me.project_id);
+    const mine = claims.filter((c) => c.holder_id === me.id);
+    const others = claims.filter((c) => c.holder_id !== me.id);
+
+    // One short hash per standing section; an empty section hashes to "" so nothing is announced at the start.
+    const h = (parts: string[]) => (parts.length ? createHash("md5").update(parts.join("\n")).digest("hex").slice(0, 8) : "");
+    const digest = [
+      h(forMe.filter((q) => q.id <= me.q_cursor).map((q) => String(q.id))),
+      h(myQuestions.filter((q) => q.status === "open").map((q) => String(q.id))),
+      h(paused.map((t) => `${t.id} ${t.reason}`)),
+      h(tasks.map((t) => `${t.id} ${t.status} ${t.title}`)),
+      h(mine.map((c) => c.path)),
+      h(others.map((c) => `${c.path} ${c.holder_id}`)),
+    ];
+    const old = me.digest.split(",");
+    const diff = (i: number) => digest[i] !== (old[i] ?? "") || (!!opts.all && digest[i] !== "");
+    const changed = { open: diff(0), waiting: diff(1), paused: diff(2), tasks: diff(3), my_claims: diff(4), others_claims: diff(5) };
 
     if (!opts.peek) {
-      this.run("UPDATE participants SET inbox_cursor = ?, thread_cursor = ?, last_seen_at = ? WHERE id = ?", newCursor, Math.max(me.thread_cursor, maxThread), now(), me.id);
+      this.run(
+        "UPDATE participants SET inbox_cursor = ?, thread_cursor = ?, q_cursor = ?, digest = ?, last_seen_at = ? WHERE id = ?",
+        newCursor,
+        Math.max(me.thread_cursor, maxThread),
+        Math.max(me.q_cursor, maxQuestion),
+        // The first section is hashed as it will look next time, when today's new questions are old.
+        [h(forMe.map((q) => String(q.id))), ...digest.slice(1)].join(","),
+        now(),
+        me.id,
+      );
     }
-    const claims = this.listClaims(me.project_id);
     return {
       me: this.participantView(me),
       cursor: { from: cursor, to: opts.peek ? cursor : newCursor },
+      q_cursor: me.q_cursor,
+      changed,
       messages,
       more,
       new_threads: newThreads,
-      questions_for_me: this.listQuestions(me.project_id, { status: "open", for: me }),
+      questions_for_me: forMe,
       my_questions: myQuestions,
-      paused_threads: this.all<{ id: number; title: string; status_reason: string }>(
-        `SELECT t.id, t.title, t.status_reason FROM threads t WHERE t.project_id = ? AND t.status = 'human_needed'
-           AND (? = 'human' OR EXISTS (SELECT 1 FROM thread_members tm WHERE tm.thread_id = t.id AND tm.participant_id = ?))`,
-        me.project_id,
-        me.kind,
-        me.id,
-      ).map((t) => ({ id: t.id, title: t.title, reason: t.status_reason })),
-      my_tasks: this.listTasks(me.project_id, { assignee: me, openOnly: true }),
-      my_claims: claims.filter((c) => c.holder_id === me.id),
-      others_claims: claims.filter((c) => c.holder_id !== me.id),
+      paused_threads: paused,
+      my_tasks: tasks,
+      my_claims: mine,
+      others_claims: others,
     };
   }
 
-  /** Resolve when something relevant for the participant happens, or after the timeout. */
+  /** Resolve when something new for the participant happens, or after the timeout. */
   waitForActivity(p: Participant, timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
-    const pending = this.one<{ c: number }>(
-      `SELECT COUNT(*) AS c FROM messages m LEFT JOIN participants a ON a.id = m.author_id
-        WHERE m.project_id = ? AND m.id > ? AND (m.author_id IS NULL OR m.author_id != ?)
-          AND (? = 'human' OR a.kind = 'human' OR m.kind = 'decision'
-               OR EXISTS (SELECT 1 FROM thread_members tm WHERE tm.thread_id = m.thread_id AND tm.participant_id = ? AND tm.since_id <= m.id))`,
-      p.project_id,
-      this.one<{ c: number }>("SELECT inbox_cursor AS c FROM participants WHERE id = ?", p.id)!.c,
-      p.id,
-      p.kind,
-      p.id,
-    )!.c;
-    if (pending > 0 || this.listQuestions(p.project_id, { status: "open", for: p }).length > 0) return Promise.resolve(true);
+    if (this.pending(p) > 0) return Promise.resolve(true);
     return new Promise((resolveP) => {
       const finish = (v: boolean) => {
         clearTimeout(timer);

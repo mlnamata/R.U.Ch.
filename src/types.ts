@@ -42,6 +42,8 @@ export interface Participant {
   status_text: string;
   inbox_cursor: number;
   thread_cursor: number;
+  q_cursor: number;
+  digest: string;
   last_seen_at: string | null;
   created_at: string;
 }

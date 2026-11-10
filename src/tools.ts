@@ -6,24 +6,28 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { RuchClient } from "./client.js";
+import type { Evidence } from "./types.js";
 import { loadProtocol } from "./prompts.js";
 
-const ev = z
-  .array(
-    z.object({
-      type: z.enum(["file", "message", "knowledge", "command", "url"]),
-      path: z.string().optional(),
-      lines: z.string().optional().describe('e.g. "10-25"'),
-      quote: z.string().optional().describe("verbatim text from the file"),
-      id: z.number().optional().describe("message/knowledge id"),
-      command: z.string().optional(),
-      output: z.string().optional(),
-      url: z.string().optional(),
-    }),
-  )
-  .optional()
-  .describe("Proof for claims. Fake file/lines/quote/id => rejected.");
-const conf = z.enum(["certain", "likely", "guess"]).optional().describe("guess = not stored in memory");
+/** Evidence as short strings (format is explained once, in the protocol) – an object schema repeated in four tools cost ~2k chars. */
+const ev = z.array(z.string()).optional();
+const conf = z.enum(["certain", "likely", "guess"]).optional();
+
+/** "src/a.ts:10-20 | verbatim quote" · "M12" · "K3" · "$ npm test | 12 passed" · URL */
+export function parseEvidence(list?: string[]): Evidence[] | undefined {
+  if (!list?.length) return undefined;
+  return list.map((raw): Evidence => {
+    const [head, ...tail] = raw.split(" | ");
+    const e = head.trim();
+    const extra = tail.join(" | ").trim() || undefined;
+    if (/^M\d+$/i.test(e)) return { type: "message", id: Number(e.slice(1)) };
+    if (/^K\d+$/i.test(e)) return { type: "knowledge", id: Number(e.slice(1)) };
+    if (/^https?:\/\//.test(e)) return { type: "url", url: e };
+    if (e.startsWith("$")) return { type: "command", command: e.slice(1).trim(), output: extra };
+    const m = /^(.*?)(?::(\d+(?:-\d+)?))?$/.exec(e)!;
+    return { type: "file", path: m[1], lines: m[2], quote: extra };
+  });
+}
 
 export interface ToolDef {
   name: string;
@@ -43,14 +47,14 @@ const q = (o: Record<string, unknown>) => {
 export const TOOLS: ToolDef[] = [
   {
     name: "inbox",
-    description: "New items for you: messages, questions to you, answers, tasks, locks. Call first each step. wait>0 blocks until activity.",
+    description: "What is new for you. Call first. Tasks/locks/old questions appear only when changed (all=true: everything). wait>0 blocks until news.",
     readOnly: true,
-    schema: z.object({ wait: z.number().min(0).max(300).optional().describe("seconds") }),
-    run: (c, a) => c.text("GET", `/api/inbox${q({ wait: a.wait })}`),
+    schema: z.object({ wait: z.number().optional().describe("seconds, max 300"), all: z.boolean().optional() }),
+    run: (c, a) => c.text("GET", `/api/inbox${q({ wait: a.wait ? Math.min(Math.max(a.wait, 0), 300) : undefined, all: a.all ? 1 : undefined })}`),
   },
   {
     name: "send",
-    description: "Post to thread. @Name mentions (@human = the human). kind: chat|decision|review|status.",
+    description: "Post to a thread. @Name mentions, @human = the human.",
     schema: z.object({
       thread: z.number(),
       text: z.string(),
@@ -60,7 +64,7 @@ export const TOOLS: ToolDef[] = [
       confidence: conf,
     }),
     run: (c, a) =>
-      c.text("POST", `/api/threads/${a.thread}/messages`, { body: a.text, kind: a.kind, reply_to: a.reply_to, evidence: a.evidence, confidence: a.confidence }),
+      c.text("POST", `/api/threads/${a.thread}/messages`, { body: a.text, kind: a.kind, reply_to: a.reply_to, evidence: parseEvidence(a.evidence), confidence: a.confidence }),
   },
   {
     name: "thread",
@@ -91,27 +95,28 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: "ask",
-    description: 'Ask an agent (to=name), the human (to="human") or anyone. Shows similar known answers. wait>0 waits for the answer.',
+    description: 'Ask an agent (to=name), the human (to="human") or anyone (omit to). wait>0 waits for the answer. cancel=Q withdraws your question.',
     schema: z.object({
-      question: z.string(),
+      question: z.string().optional(),
       to: z.string().optional(),
       thread: z.number().optional(),
-      options: z.array(z.string()).max(6).optional(),
+      options: z.array(z.string()).optional(),
       blocking: z.boolean().optional(),
-      wait: z.number().min(0).max(300).optional(),
+      wait: z.number().optional(),
+      cancel: z.number().optional(),
     }),
     run: (c, a) =>
-      c.text("POST", "/api/questions", { body: a.question, to: a.to, thread_id: a.thread, options: a.options, blocking: a.blocking, wait_seconds: a.wait }),
+      a.cancel ? c.text("POST", `/api/questions/${a.cancel}/cancel`, {}) : c.text("POST", "/api/questions", { body: a.question ?? "", to: a.to, thread_id: a.thread, options: a.options, blocking: a.blocking, wait_seconds: a.wait ? Math.min(Math.max(Math.round(a.wait), 0), 300) : undefined }),
   },
   {
     name: "answer",
-    description: "Answer question Q. Stored in shared memory unless confidence=guess. Unsure? Say so, never invent.",
+    description: "Answer question Q. Goes to shared memory unless confidence=guess.",
     schema: z.object({ question: z.number(), text: z.string(), confidence: conf, choice: z.string().optional(), evidence: ev }),
-    run: (c, a) => c.text("POST", `/api/questions/${a.question}/answer`, { body: a.text, confidence: a.confidence, choice: a.choice, evidence: a.evidence }),
+    run: (c, a) => c.text("POST", `/api/questions/${a.question}/answer`, { body: a.text, confidence: a.confidence, choice: a.choice, evidence: parseEvidence(a.evidence) }),
   },
   {
     name: "memory",
-    description: "Shared project memory. search (query) before asking/deciding | save (kind fact|decision|note, title, text, evidence) | dispute (id, text).",
+    description: "Shared memory. search (query) before asking/deciding | save (kind, title, text, evidence) | dispute (id, text).",
     schema: z.object({
       action: z.enum(["search", "save", "dispute"]),
       query: z.string().optional(),
@@ -124,13 +129,13 @@ export const TOOLS: ToolDef[] = [
     readOnly: false,
     run: (c, a) => {
       if (a.action === "search") return c.text("GET", `/api/knowledge${q({ q: a.query ?? "", limit: 6 })}`);
-      if (a.action === "save") return c.text("POST", "/api/knowledge", { kind: a.kind ?? "fact", title: a.title ?? "", body: a.text ?? "", evidence: a.evidence });
+      if (a.action === "save") return c.text("POST", "/api/knowledge", { kind: a.kind ?? "fact", title: a.title ?? "", body: a.text ?? "", evidence: parseEvidence(a.evidence) });
       return c.text("POST", `/api/knowledge/${a.id}/dispute`, { reason: a.text ?? "" });
     },
   },
   {
     name: "files",
-    description: "File locks. claim before editing (conflict = someone else edits it, don't) | release when done | check.",
+    description: "File locks. claim before editing (conflict = don't edit) | release when done | check.",
     schema: z.object({ action: z.enum(["claim", "release", "check"]), paths: z.array(z.string()).optional(), reason: z.string().optional() }),
     run: (c, a) => {
       if (a.action === "claim") return c.text("POST", "/api/claims", { paths: a.paths ?? [], reason: a.reason });
@@ -140,7 +145,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: "task",
-    description: "list | new (title, to, thread) | update (id, status todo|doing|review|done|blocked, take). Done work goes to review; you can't approve your own.",
+    description: "list | new (title, to, thread) | update (id, status, take). Finished work goes to review; you can't approve your own.",
     schema: z.object({
       action: z.enum(["list", "new", "update"]),
       id: z.number().optional(),
@@ -168,18 +173,18 @@ export const TOOLS: ToolDef[] = [
       risks: z.array(z.string()).optional(),
       evidence: ev,
     }),
-    run: (c, a) => c.text("POST", "/api/handoff", { thread_id: a.thread, to: a.to, summary: a.summary, done: a.done, next: a.next, risks: a.risks, evidence: a.evidence }),
+    run: (c, a) => c.text("POST", "/api/handoff", { thread_id: a.thread, to: a.to, summary: a.summary, done: a.done, next: a.next, risks: a.risks, evidence: parseEvidence(a.evidence) }),
   },
   {
     name: "escalate",
-    description: "Ask the human to decide (disagreement after 2 rounds, unclear spec, irreversible step). Pauses the thread.",
-    schema: z.object({ thread: z.number(), problem: z.string(), options: z.array(z.string()).min(1).max(6), recommendation: z.string().optional() }),
+    description: "Ask the human to decide. Pauses the thread.",
+    schema: z.object({ thread: z.number(), problem: z.string(), options: z.array(z.string()), recommendation: z.string().optional() }),
     run: (c, a) => c.text("POST", "/api/escalate", { thread_id: a.thread, problem: a.problem, options: a.options, recommendation: a.recommendation }),
   },
   {
     name: "status",
     description: "Set your short visible status.",
-    schema: z.object({ text: z.string().max(200) }),
+    schema: z.object({ text: z.string() }),
     run: (c, a) => c.text("POST", "/api/status", { text: a.text }),
   },
 ];
@@ -200,7 +205,7 @@ export async function runTool(client: RuchClient, name: string, args: unknown): 
 
 export function buildMcpServer(client: RuchClient, role = ""): McpServer {
   const server = new McpServer(
-    { name: "ruch", version: "0.2.0" },
+    { name: "ruch", version: "0.3.0" },
     { instructions: `You are "${client.opts.name}" in an R.U.Ch. room.\n\n${loadProtocol(role)}` },
   );
   for (const t of TOOLS) {

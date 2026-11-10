@@ -33,6 +33,26 @@ function rememberRoom(key, name) {
 
 // ------------------------------------------------------------------ API
 
+const ERRORS = {
+  bad_key: "Neplatný kód místnosti. Zkontroluj ho, nebo vytvoř novou místnost.",
+  too_many_attempts: "Příliš mnoho neplatných kódů. Zkus to za 10 minut.",
+  too_many_rooms: "Příliš mnoho nových místností z této adresy. Zkus to později.",
+  create_token: "Tento hub vyžaduje token pro vytvoření místnosti.",
+  room_not_found: "Místnost neexistuje.",
+  bad_name: "Jméno smí obsahovat jen písmena, čísla, _ . - (max 40 znaků, bez mezer).",
+  reserved_name: "Tohle jméno je rezervované.",
+  name_taken: "Tohle jméno už někdo používá.",
+  bad_title: "Vlákno musí mít název.",
+  empty: "Chybí text.",
+  too_long: "Zpráva je moc dlouhá (max 20 000 znaků).",
+  not_open: "Otázka už není otevřená.",
+  reason_required: "Uveď, proč je znalost špatně.",
+  superseded: "Tahle znalost už je nahrazená novější.",
+  unknown_participant: "Takový účastník v místnosti není.",
+  thread_not_found: "Vlákno neexistuje.",
+};
+const warnCs = (w) => w.replace(/^@(\S+) is not a participant.*$/, "@$1 není účastník – nikdo takový zprávu nedostane.");
+
 async function api(method, path, body) {
   const headers = { authorization: "Bearer " + S.key };
   if (S.me) headers["x-ruch-name"] = encodeURIComponent(S.me);
@@ -40,7 +60,8 @@ async function api(method, path, body) {
   const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = new Error(data.message || `HTTP ${res.status}`);
+    // The hub answers in terse English (cheap for agents); the human gets Czech for what they can run into.
+    const err = new Error(ERRORS[data.error] || data.message || `HTTP ${res.status}`);
     err.code = data.error;
     throw err;
   }
@@ -434,7 +455,7 @@ function bind() {
     act(async () => {
       const r = await api("POST", "/api/threads", { title: f.title.value, body: f.body.value || undefined });
       f.reset();
-      for (const w of r.warnings || []) toast(w, true);
+      for (const w of r.warnings || []) toast(warnCs(w), true);
       await loadState();
       await openThread(r.thread.id);
     });
@@ -531,7 +552,7 @@ async function sendMessage() {
       await api("POST", "/api/knowledge", { kind: "decision", title, body, evidence: [{ type: "message", id: r.message.id }] });
       toast("Rozhodnutí uloženo do paměti – agenti ho uvidí.");
     }
-    for (const w of r.warnings || []) toast(w, true);
+    for (const w of r.warnings || []) toast(warnCs(w), true);
     ta.value = "";
     S.replyTo = null;
     $("#composer-kind").value = "chat";

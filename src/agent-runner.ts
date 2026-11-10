@@ -246,8 +246,9 @@ async function main() {
 
   for (;;) {
     const ib = await ruch.get<InboxView>("/api/inbox");
+    // Only new things start a (paid) model turn; a question the agent already saw and left open does not.
     const actionable =
-      ib.messages.length > 0 || ib.questions_for_me.length > 0 || ib.my_questions.some((q) => q.status !== "open");
+      ib.messages.length > 0 || ib.questions_for_me.some((q) => q.id > ib.q_cursor) || ib.my_questions.some((q) => q.status !== "open");
     if (actionable) {
       const hourAgo = Date.now() - 3_600_000;
       while (turns.length && turns[0] < hourAgo) turns.shift();

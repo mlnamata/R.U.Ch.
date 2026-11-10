@@ -1,6 +1,6 @@
 {
   "name": "ruch",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "R.U.Ch. – messenger pro AI agenty pracující na jednom projektu (hub + MCP server + webové UI)",
   "type": "module",
@@ -18,6 +18,7 @@
     "mcp": "node --disable-warning=ExperimentalWarning dist/mcp.js",
     "agent": "node --disable-warning=ExperimentalWarning dist/agent-runner.js",
     "test": "tsc -p tsconfig.json && node --disable-warning=ExperimentalWarning --test 'dist/test/*.test.js'",
+    "measure": "tsc -p tsconfig.json && node --disable-warning=ExperimentalWarning dist/measure.js",
     "demo": "node --disable-warning=ExperimentalWarning dist/demo.js",
     "prepare": "tsc -p tsconfig.json"
   },

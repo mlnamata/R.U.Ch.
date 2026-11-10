@@ -126,14 +126,14 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > MAX_BODY) throw new HubError(413, "too_large", "Požadavek je příliš velký.");
+    if (size > MAX_BODY) throw new HubError(413, "too_large", "Request too large.");
     chunks.push(chunk as Buffer);
   }
   if (size === 0) return {};
   try {
     return JSON.parse(Buffer.concat(chunks).toString("utf8"));
   } catch {
-    throw new HubError(400, "bad_json", "Tělo požadavku není platný JSON.");
+    throw new HubError(400, "bad_json", "Request body is not valid JSON.");
   }
 }
 
@@ -212,21 +212,21 @@ export function createHttpServer(hub: Hub, cfg: ServerConfig): Server {
       // Only the owner learns the agent code (it is derived from the owner key).
       agent_code: c.role === "owner" ? hub.agentCodeFor(c.key, p) : undefined,
     };
-  }, (o) => `Jsi ${o.me.name} (${o.role === "owner" ? "člověk" : "agent"}) v místnosti "${o.project.name}".${o.project.brief ? `\nZadání: ${o.project.brief}` : ""}`);
+  }, (o) => `You are ${o.me.name} (${o.role === "owner" ? "human" : "agent"}) in "${o.project.name}".${o.project.brief ? `\nBrief: ${o.project.brief}` : ""}`);
   route("POST", "/api/join", async (c) => {
     const b = await c.body(S.join);
     const me = hub.join(pid(c), c.me.name, c.me.kind, b.role);
     return { me: hub.participantView(me), project: hub.projectById(pid(c)) };
-  }, (o) => `Připojen(a) jako ${o.me.name} do "${o.project.name}".${o.project.brief ? `\nZadání: ${o.project.brief}` : ""}`);
+  }, (o) => `Joined "${o.project.name}" as ${o.me.name}.${o.project.brief ? `\nBrief: ${o.project.brief}` : ""}`);
   route("GET", "/api/state", (c) => ({ ...hub.state(pid(c)), role: c.role, me: hub.participantView(c.me) }));
   route("POST", "/api/status", async (c) => hub.participantView(hub.setStatus(c.me, (await c.body(S.status)).text)), () => "OK");
   route("PATCH", "/api/project", async (c) => hub.updateProject(c.me, await c.body(S.project)));
   route("POST", "/api/room/rotate", (c) => {
-    if (c.role !== "owner") throw new HubError(403, "owner_only", "Kód může změnit jen vlastník místnosti.");
+    if (c.role !== "owner") throw new HubError(403, "owner_only", "Only the room owner can change the code.");
     return { agent_code: hub.rotateAgentCode(c.me, c.key) };
   });
   route("GET", "/api/participants", (c) => hub.listParticipants(pid(c)), (o: ReturnType<Hub["listParticipants"]>) =>
-    o.map((p) => `${p.name} (${p.kind === "human" ? "člověk" : p.role || "agent"}${p.online ? "" : ", offline"})${p.status_text ? ` – ${p.status_text}` : ""}`).join("\n"),
+    o.map((p) => `${p.name} (${p.kind === "human" ? "human" : p.role || "agent"}${p.online ? "" : ", offline"})${p.status_text ? ` – ${p.status_text}` : ""}`).join("\n"),
   );
 
   // ---------------------------------------------------------------- inbox (optionally waits)
@@ -234,23 +234,23 @@ export function createHttpServer(hub: Hub, cfg: ServerConfig): Server {
   route("GET", "/api/inbox", async (c) => {
     const wait = Math.min(qnum(c, "wait") ?? 0, 300);
     if (wait > 0) await hub.waitForActivity(c.me, wait * 1000, abortOnClose(c));
-    return hub.inbox(c.me, { peek: c.url.searchParams.get("peek") === "1" });
+    return hub.inbox(c.me, { peek: c.url.searchParams.get("peek") === "1", all: c.url.searchParams.get("all") === "1" });
   }, (o: InboxView) => inboxText(o));
 
   // ---------------------------------------------------------------- threads & messages
 
   route("GET", "/api/threads", (c) => hub.listThreads(pid(c), (c.url.searchParams.get("status") as never) || undefined), (o: Thread[]) =>
-    o.length ? o.map(threadHeader).join("\n") : "Žádná vlákna.",
+    o.length ? o.map(threadHeader).join("\n") : "No threads.",
   );
   route("POST", "/api/threads", async (c) => hub.createThread(c.me, await c.body(S.thread)), (o) =>
-    `Vytvořeno ${threadHeader(o.thread)}${o.message ? ` (M${o.message.id})` : ""}${warn(o.warnings)}`,
+    `OK T${o.thread.id}${o.message ? ` M${o.message.id}` : ""}${warn(o.warnings)}`,
   );
   route("GET", "/api/threads/:id", (c) =>
     hub.getThread(pid(c), id(c), { since: qnum(c, "since"), before: qnum(c, "before"), limit: qnum(c, "limit") }),
     (o) => threadText(o),
   );
   const postText = (o: { message: Message; warnings: string[]; thread: Thread }) =>
-    `OK M${o.message.id} v T${o.thread.id}${o.thread.status !== "open" ? ` (vlákno: ${o.thread.status})` : ""}${warn(o.warnings)}`;
+    `OK M${o.message.id}${warn(o.warnings)}`;
   route("POST", "/api/threads/:id/messages", async (c) => hub.post(c.me, id(c), await c.body(S.message)), postText);
   route("POST", "/api/threads/:id/status", async (c) => {
     const b = await c.body(S.threadStatus);
@@ -262,7 +262,7 @@ export function createHttpServer(hub: Hub, cfg: ServerConfig): Server {
 
   route("GET", "/api/questions", (c) =>
     hub.listQuestions(pid(c), { status: c.url.searchParams.get("status") ?? undefined, for: c.url.searchParams.get("for") === "me" ? c.me : undefined }),
-    (o: Question[]) => (o.length ? o.map(questionLine).join("\n") : "Žádné otázky."),
+    (o: Question[]) => (o.length ? o.map(questionLine).join("\n") : "No questions."),
   );
   route("POST", "/api/questions", async (c) => {
     const b = await c.body(S.ask);
@@ -271,8 +271,8 @@ export function createHttpServer(hub: Hub, cfg: ServerConfig): Server {
     return { ...r, question };
   }, (o) => {
     let t = questionLine(o.question);
-    if (o.question.status === "open") t = `Položeno: ${t}`;
-    if (o.similar_knowledge.length) t += "\nPodobné už v paměti (pokud sedí, otázku zruš):\n" + o.similar_knowledge.map(knowledgeLine).join("\n");
+    if (o.question.status === "open") t = `OK Q${o.question.id} T${o.question.thread_id}`;
+    if (o.similar_knowledge.length) t += `\nAlready in memory (if it answers you: cancel ${o.question.id}):\n` + o.similar_knowledge.map(knowledgeLine).join("\n");
     return t + warn(o.warnings);
   });
   route("GET", "/api/questions/:id", async (c) => {
@@ -280,26 +280,26 @@ export function createHttpServer(hub: Hub, cfg: ServerConfig): Server {
     return hub.waitForAnswer(pid(c), id(c), wait * 1000, abortOnClose(c));
   }, questionLine);
   route("POST", "/api/questions/:id/answer", async (c) => hub.answer(c.me, id(c), await c.body(S.answer)), (o) =>
-    `OK Q${o.question.id} zodpovězena${o.question.knowledge_id ? ` → K${o.question.knowledge_id}` : ""}${warn(o.warnings)}`,
+    `OK M${o.message.id}${o.question.knowledge_id ? ` K${o.question.knowledge_id}` : ""}${warn(o.warnings)}`,
   );
   route("POST", "/api/questions/:id/cancel", async (c) => hub.cancelQuestion(c.me, id(c), (await c.body(S.cancel)).reason), questionLine);
   route("POST", "/api/escalate", async (c) => {
     const b = await c.body(S.escalate);
     const r = hub.ask(c.me, {
       to: "human",
-      body: b.problem + (b.recommendation ? `\nDoporučuji: ${b.recommendation}` : ""),
+      body: b.problem + (b.recommendation ? `\nDoporučení: ${b.recommendation}` : ""),
       thread_id: b.thread_id,
       options: b.options,
       blocking: true,
     });
     hub.setThreadStatus(c.me, b.thread_id, "human_needed", `čeká na odpověď Q${r.question.id}`);
     return r;
-  }, (o) => `Eskalováno jako Q${o.question.id}, vlákno T${o.question.thread_id} čeká na člověka. Do něj nepiš; dělej jinou práci nebo čekej (inbox --wait).`);
+  }, (o) => `OK Q${o.question.id}; T${o.question.thread_id} paused for the human – don't post there.`);
 
   // ---------------------------------------------------------------- knowledge
 
   route("GET", "/api/knowledge", (c) => hub.searchKnowledge(pid(c), c.url.searchParams.get("q") ?? "", qnum(c, "limit") ?? 6), (o: Knowledge[]) =>
-    o.length ? o.map(knowledgeLine).join("\n") : "V paměti nic takového není.",
+    o.length ? o.map(knowledgeLine).join("\n") : "Nothing in memory.",
   );
   route("POST", "/api/knowledge", async (c) => hub.addKnowledge(c.me, await c.body(S.knowledge)), knowledgeLine);
   route("GET", "/api/knowledge/:id", (c) => hub.getKnowledge(pid(c), id(c)), knowledgeLine);
@@ -308,22 +308,22 @@ export function createHttpServer(hub: Hub, cfg: ServerConfig): Server {
 
   // ---------------------------------------------------------------- claims
 
-  const claimsText = (o: Claim[]) => (o.length ? o.map(claimLine).join("\n") : "Nic není zamčené.");
+  const claimsText = (o: Claim[]) => (o.length ? o.map((c) => claimLine(c)).join("\n") : "No locks.");
   route("GET", "/api/claims", (c) => hub.listClaims(pid(c)), claimsText);
   route("POST", "/api/claims", async (c) => hub.claim(c.me, await c.body(S.claim)), (o) =>
-    [o.granted.length ? `Zamčeno: ${o.granted.join(", ")}` : "", o.conflicts.length ? "KONFLIKT – needituj:\n" + o.conflicts.map(claimLine).join("\n") : ""]
+    [o.granted.length ? `Locked: ${o.granted.join(", ")}` : "", o.conflicts.length ? "CONFLICT – don't edit:\n" + o.conflicts.map((c: Claim) => claimLine(c)).join("\n") : ""]
       .filter(Boolean)
-      .join("\n") || "Nic nezamčeno.",
+      .join("\n") || "Nothing locked.",
   );
-  route("POST", "/api/claims/release", async (c) => hub.release(c.me, (await c.body(S.release)).paths), (o) => `Uvolněno: ${o.released}`);
+  route("POST", "/api/claims/release", async (c) => hub.release(c.me, (await c.body(S.release)).paths), (o) => `Released: ${o.released}`);
   route("POST", "/api/claims/check", async (c) => ({ conflicts: hub.checkPaths(pid(c), (await c.body(S.check)).paths, c.me.id) }), (o) =>
-    o.conflicts.length ? o.conflicts.map(claimLine).join("\n") : "Volné.",
+    o.conflicts.length ? o.conflicts.map((c: Claim) => claimLine(c)).join("\n") : "Free.",
   );
 
   // ---------------------------------------------------------------- tasks & handoff
 
   route("GET", "/api/tasks", (c) => hub.listTasks(pid(c), { status: c.url.searchParams.get("status") ?? undefined }), (o: Task[]) =>
-    o.length ? o.map(taskLine).join("\n") : "Žádné úkoly.",
+    o.length ? o.map(taskLine).join("\n") : "No tasks.",
   );
   route("POST", "/api/tasks", async (c) => hub.createTask(c.me, await c.body(S.task)), taskLine);
   route("PATCH", "/api/tasks/:id", async (c) => hub.updateTask(c.me, id(c), await c.body(S.taskPatch)), taskLine);
@@ -334,17 +334,17 @@ export function createHttpServer(hub: Hub, cfg: ServerConfig): Server {
   function authenticate(req: IncomingMessage): { me: Participant; role: Ctx["role"]; key: string; project: Project } {
     const h = req.headers.authorization;
     const key = h?.startsWith("Bearer ") ? h.slice(7).trim() : null;
-    if (!key) throw new HubError(401, "no_key", "Chybí kód místnosti (hlavička Authorization: Bearer <kód>).");
+    if (!key) throw new HubError(401, "no_key", "Missing room code (header Authorization: Bearer <code>).");
     const ip = clientIp(req);
     const auth = hub.authenticate(key);
     if (!auth) {
-      if (!authFailLimit.hit(ip)) throw new HubError(429, "too_many_attempts", "Příliš mnoho neplatných kódů. Zkus to za 10 minut.");
-      throw new HubError(401, "bad_key", "Neplatný kód místnosti. Zkontroluj ho, nebo vytvoř novou místnost.");
+      if (!authFailLimit.hit(ip)) throw new HubError(429, "too_many_attempts", "Too many invalid codes. Try again in 10 minutes.");
+      throw new HubError(401, "bad_key", "Invalid room code. Check it or create a new room.");
     }
     const kind = auth.role === "owner" ? "human" : "agent";
     let name = header(req, "x-ruch-name");
     if (!name) {
-      if (kind === "agent") throw new HubError(400, "no_name", "Chybí jméno agenta (hlavička X-Ruch-Name).");
+      if (kind === "agent") throw new HubError(400, "no_name", "Missing agent name (header X-Ruch-Name).");
       name = hub.listParticipants(auth.project.id).find((p) => p.kind === "human")?.name ?? cfg.hub.humanName;
     }
     const me = hub.join(auth.project.id, name, kind);
@@ -382,7 +382,7 @@ export function createHttpServer(hub: Hub, cfg: ServerConfig): Server {
 
   function agentInstructions(req: IncomingMessage, code?: string) {
     const hubUrl = publicUrl(req);
-    return `# R.U.Ch. – připojení agenta${code ? ` do místnosti ${code}` : ""}
+    return `# R.U.Ch. – agent setup${code ? ` for room ${code}` : ""}
 
 You are an AI agent. R.U.Ch. is a chat hub where AI agents and their human coordinate on one project.
 
@@ -431,10 +431,10 @@ Ask the human (in their language) before joining if you were not given a code: "
   async function mcp(req: IncomingMessage, res: ServerResponse, url: URL) {
     const code = url.searchParams.get("code") ?? (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
     const name = url.searchParams.get("name") ?? header(req, "x-ruch-name") ?? "Agent";
-    if (!code) throw new HubError(401, "no_key", "Přidej ?code=<kód místnosti>&name=<jméno> do URL MCP serveru.");
+    if (!code) throw new HubError(401, "no_key", "Add ?code=<room code>&name=<name> to the MCP server URL.");
     if (!hub.authenticate(code)) {
-      if (!authFailLimit.hit(clientIp(req))) throw new HubError(429, "too_many_attempts", "Příliš mnoho neplatných kódů.");
-      throw new HubError(401, "bad_key", "Neplatný kód místnosti.");
+      if (!authFailLimit.hit(clientIp(req))) throw new HubError(429, "too_many_attempts", "Too many invalid codes.");
+      throw new HubError(401, "bad_key", "Invalid room code.");
     }
     if (req.method !== "POST") {
       res.writeHead(405, { allow: "POST" }).end();
@@ -470,8 +470,8 @@ Ask the human (in their language) before joining if you were not given a code: "
       if (url.pathname === "/api/health") return send(res, 200, { ok: true });
       if (url.pathname === "/api/rooms" && req.method === "POST") {
         const b = S.room(await readJson(req), "");
-        if (cfg.createToken && b.token !== cfg.createToken) throw new HubError(403, "create_token", "Tento hub vyžaduje token pro vytvoření místnosti.");
-        if (!createLimit.hit(clientIp(req))) throw new HubError(429, "too_many_rooms", "Příliš mnoho nových místností z této adresy. Zkus to později.");
+        if (cfg.createToken && b.token !== cfg.createToken) throw new HubError(403, "create_token", "This hub requires a token to create a room.");
+        if (!createLimit.hit(clientIp(req))) throw new HubError(429, "too_many_rooms", "Too many new rooms from this address. Try later.");
         const r = hub.createRoom({ name: b.name, humanName: b.human_name });
         const base = publicUrl(req);
         return send(res, 200, {
@@ -502,19 +502,23 @@ Ask the human (in their language) before joining if you were not given a code: "
         };
         const out = await handler(ctx);
         if (res.headersSent || res.destroyed) return;
-        if (toText && (req.headers.accept ?? "").startsWith("text/plain")) return sendText(res, 200, toText(out));
+        if (toText && (req.headers.accept ?? "").startsWith("text/plain")) {
+          // Tell agents about waiting news on every reply, so they never call the inbox just to check.
+          const n = a.role === "agent" && url.pathname !== "/api/inbox" ? hub.pending(a.me) : 0;
+          return sendText(res, 200, toText(out) + (n ? `\n+${n} new → inbox` : ""));
+        }
         return send(res, 200, out);
       }
-      send(res, 404, { error: "not_found", message: `Neznámý endpoint ${req.method} ${url.pathname}` });
+      send(res, 404, { error: "not_found", message: `Unknown endpoint ${req.method} ${url.pathname}` });
     } catch (e) {
       if (res.headersSent) return void res.end();
-      const err = e instanceof ValidationError ? new HubError(400, "bad_request", `Neplatný požadavek: ${e.message}`) : e;
+      const err = e instanceof ValidationError ? new HubError(400, "bad_request", `Bad request: ${e.message}`) : e;
       if (err instanceof HubError) {
-        if ((req.headers.accept ?? "").startsWith("text/plain")) return sendText(res, err.status, `CHYBA: ${err.message}`);
+        if ((req.headers.accept ?? "").startsWith("text/plain")) return sendText(res, err.status, `ERROR: ${err.message}`);
         return send(res, err.status, { error: err.code, message: err.message, details: err.details });
       }
       console.error(e);
-      send(res, 500, { error: "internal", message: "Interní chyba serveru." });
+      send(res, 500, { error: "internal", message: "Internal server error." });
     }
   });
 

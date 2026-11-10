@@ -39,7 +39,7 @@ await t(koder, "send", {
   thread,
   kind: "status",
   text: "Migrace hotová: `ALTER TABLE projects ADD COLUMN api_key_id uuid REFERENCES vault.secrets(id);` + RLS politika jen pro vlastníka.",
-  evidence: [{ type: "command", command: "supabase db reset", output: "Finished supabase db reset." }],
+  evidence: ["$ supabase db reset | Finished supabase db reset."],
   confidence: "certain",
 });
 await t(koder, "ask", {

@@ -4,7 +4,10 @@ import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDatabase } from "../db.js";
+import { inboxText } from "../format.js";
 import { DEFAULT_CONFIG, Hub, HubError } from "../hub.js";
+import { parseEvidence } from "../tools.js";
+import { DatabaseSync } from "node:sqlite";
 
 function setup(overrides: Partial<typeof DEFAULT_CONFIG> = {}) {
   const hub = new Hub(openDatabase(":memory:"), { ...DEFAULT_CONFIG, ...overrides });
@@ -81,7 +84,7 @@ test("evidence is verified against real files, hallucinated evidence is rejected
 
   const missing = hub.post(a, thread.id, { kind: "decision", body: "Bereme JWT" });
   assert.equal(missing.message.evidence_status, "missing");
-  assert.ok(missing.warnings.some((w) => /důkaz/.test(w)));
+  assert.ok(missing.warnings.some((w) => /without evidence/.test(w)));
 });
 
 test("questions: answers go to shared memory, guesses do not, similar questions are surfaced", () => {
@@ -215,4 +218,75 @@ test("cleanup deletes inactive rooms with all their data", () => {
   (hub as any).db.prepare("UPDATE projects SET last_active_at = '2000-01-01T00:00:00Z' WHERE id = ?").run(pid);
   assert.equal(hub.cleanup().roomsDeleted, 1);
   assert.equal((hub as any).db.prepare("SELECT COUNT(*) AS c FROM messages").get().c, 0);
+});
+
+test("inbox shows standing state once and again only when it changes", () => {
+  const { hub, a, b } = setup();
+  const { thread } = hub.createThread(a, { title: "API", body: "@Beta mrkni" });
+  hub.claim(a, { paths: ["src/api"], reason: "refactor" });
+  hub.createTask(a, { title: "Review", assignee: "Beta" });
+  hub.ask(a, { body: "Jaký port má staging?", thread_id: thread.id });
+
+  const first = inboxText(hub.inbox(b));
+  assert.match(first, /Questions for you[\s\S]*Q1 /);
+  assert.match(first, /Your tasks:\n #1 todo Review/);
+  assert.match(first, /Locked by others[^\n]*\n src\/api Alfa \(refactor\)/);
+  // The question is listed as a question, not a second time as a message.
+  assert.equal(first.match(/Jaký port/g)?.length, 1);
+
+  assert.equal(inboxText(hub.inbox(b)), "Nothing new.");
+  hub.post(a, thread.id, { body: "Hotovo, testy prošly" });
+  assert.equal(inboxText(hub.inbox(b)), `T${thread.id}:\n M3 Alfa: Hotovo, testy prošly`);
+
+  hub.release(a);
+  assert.equal(inboxText(hub.inbox(b)), "Locked by others (don't edit): none");
+  assert.match(inboxText(hub.inbox(b, { all: true })), /Still open for you: Q1\nYour tasks:/);
+});
+
+test("answers reach the asker once, merged with the answer message", () => {
+  const { hub, human, a } = setup();
+  const { question } = hub.ask(a, { to: "human", body: "Nasadit?", options: ["Ano", "Ne"] });
+  hub.inbox(a);
+  hub.answer(human, question.id, { body: "", choice: "A) Ano" });
+  assert.equal(inboxText(hub.inbox(a)), 'Answers to your questions:\nQ1 "Nasadit?" ✓ Supervizor [certain]: Volba: A) Ano (K1)');
+  assert.equal(inboxText(hub.inbox(a)), "Nothing new.");
+});
+
+test("waiting is not woken by a question the agent has already seen", async () => {
+  const { hub, a, b } = setup();
+  hub.ask(a, { body: "Ví někdo, kde je konfigurace?" });
+  assert.equal(hub.pending(b), 1);
+  assert.equal(await hub.waitForActivity(b, 1000), true);
+  hub.inbox(b);
+  assert.equal(hub.pending(b), 0);
+  // Before: an open question to anyone made every wait return at once, so an idle agent spun in a loop.
+  assert.equal(await hub.waitForActivity(b, 30), false);
+  const waiting = hub.waitForActivity(b, 2000);
+  hub.ask(a, { to: "Beta", body: "A kde jsou testy?" });
+  assert.equal(await waiting, true);
+});
+
+test("MCP evidence strings parse into the same evidence as the CLI flags", () => {
+  assert.deepEqual(parseEvidence(["src/a.ts:10-20 | const x = 1 | 2", "M12", "k3", "$ npm test | 12 passed", "https://x.dev/a", "README.md"]), [
+    { type: "file", path: "src/a.ts", lines: "10-20", quote: "const x = 1 | 2" },
+    { type: "message", id: 12 },
+    { type: "knowledge", id: 3 },
+    { type: "command", command: "npm test", output: "12 passed" },
+    { type: "url", url: "https://x.dev/a" },
+    { type: "file", path: "README.md", lines: undefined, quote: undefined },
+  ]);
+  assert.equal(parseEvidence([]), undefined);
+});
+
+test("a version 2 database is upgraded in place", () => {
+  const file = join(mkdtempSync(join(tmpdir(), "ruch-db-")), "hub.db");
+  const hub = new Hub(openDatabase(file));
+  const room = hub.createRoom({ name: "Staré" });
+  hub.join(room.project.id, "Alfa", "agent");
+  const raw = new DatabaseSync(file);
+  raw.exec("ALTER TABLE participants DROP COLUMN q_cursor; ALTER TABLE participants DROP COLUMN digest; PRAGMA user_version = 2");
+  raw.close();
+  const again = new Hub(openDatabase(file));
+  const alfa = again.join(room.project.id, "Alfa", "agent");
+  assert.equal(inboxText(again.inbox(alfa)), "Nothing new.");
 });

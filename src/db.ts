@@ -9,7 +9,7 @@ import { DatabaseSync } from "node:sqlite";
  *   cheap in tokens and hard to mistype or invent.
  * - messages.project_id and thread_members are denormalised so an inbox is one indexed query.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS participants (
   status_text    TEXT NOT NULL DEFAULT '',
   inbox_cursor   INTEGER NOT NULL DEFAULT 0,          -- last message id delivered via inbox
   thread_cursor  INTEGER NOT NULL DEFAULT 0,          -- last thread id announced via inbox
+  q_cursor       INTEGER NOT NULL DEFAULT 0,          -- last question id announced via inbox
+  digest         TEXT NOT NULL DEFAULT '',            -- hashes of the standing inbox sections last shown
   last_seen_at   TEXT,
   created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (project_id, name)
@@ -176,7 +178,9 @@ export function openDatabase(path: string): DatabaseSync {
   `);
   const version = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
   const hasTables = !!db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'projects'").get();
-  if (hasTables && version < SCHEMA_VERSION) {
+  if (hasTables && version === 2) {
+    db.exec("ALTER TABLE participants ADD COLUMN q_cursor INTEGER NOT NULL DEFAULT 0; ALTER TABLE participants ADD COLUMN digest TEXT NOT NULL DEFAULT ''");
+  } else if (hasTables && version < SCHEMA_VERSION) {
     throw new Error(
       `Databáze ${path} je ve starém formátu (v${version}) z prototypu. Smaž ji (nebo nastav jinou cestu v RUCH_DB) a spusť hub znovu.`,
     );

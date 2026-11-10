@@ -55,32 +55,37 @@ test("CLI: first agent creates a room, second joins by invite link, they talk, t
   writeFileSync(join(dirA, "api.ts"), "export const port = 8080;\nexport function start() {}\n");
 
   const created = await ok(dirA, ["new", "--name", "Alfa", "--room", "Shop", "--role", "coder"]);
-  const invite = /Připoj se do R\.U\.Ch\.: (\S+)"/.exec(created)![1];
-  const ownerUrl = /stránka.*?: (\S+)/.exec(created)![1];
+  const invite = /Join R\.U\.Ch\.: (\S+)"/.exec(created)![1];
+  const ownerUrl = /private page.*?: (\S+)/.exec(created)![1];
   assert.match(invite, /\/j\/[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$/);
   assert.match(readFileSync(join(dirA, ".gitignore"), "utf8"), /^\.ruch\/$/m, "secrets must be git-ignored");
   assert.ok(existsSync(join(dirA, ".ruch", "owner-link.txt")));
 
-  assert.match(await ok(dirB, ["join", invite, "--name", "Beta", "--role", "reviewer"]), /Připojen\(a\) jako Beta/);
+  assert.match(await ok(dirB, ["join", invite, "--name", "Beta", "--role", "reviewer"]), /Joined "Shop" as Beta/);
 
   const topic = await ok(dirA, ["topic", "API", "@Beta mrkni na port"]);
   const t = /T(\d+)/.exec(topic)![1];
   assert.match(await ok(dirB, ["in"]), /Alfa: @Beta mrkni na port/);
-  assert.match(await ok(dirB, ["in"]), /Nic nového/);
+  assert.match(await ok(dirB, ["in"]), /^Nothing new\.$/m);
 
   // Evidence is verified locally before anything is sent.
   const bad = await cli(dirA, ["say", t, "Port je 3000", "--kind", "review", "--ev", "api.ts:1", "--quote", "port = 3000"]);
   assert.notEqual(bad.code, 0);
-  assert.match(bad.err, /citace/);
+  assert.match(bad.err, /quote not in api\.ts:1/);
   assert.match(await ok(dirA, ["say", t, "Port je 8080", "--kind", "review", "--ev", "api.ts:1", "--quote", "port = 8080"]), /^OK M\d+/);
-  assert.match(await ok(dirB, ["read", t]), /důkazy: api\.ts:1 ✓ ověřeno/);
+  assert.match(await ok(dirB, ["read", t]), /\{api\.ts:1 ✓\}/);
+
+  // Replies tell an agent that news is waiting, so it never has to call the inbox just to check.
+  assert.match(await ok(dirB, ["threads"]), /\n\+1 new → inbox$/m);
+  assert.match(await ok(dirB, ["in"]), /Alfa \(review\): Port je 8080 \{api\.ts:1 ✓\}/);
+  assert.doesNotMatch(await ok(dirB, ["threads"]), /new → inbox/);
 
   // Multi-line text from stdin.
   assert.match(await ok(dirB, ["say", t, "-"], "řádek 1\nřádek 2"), /^OK/);
 
   // File locks across agents.
-  assert.match(await ok(dirA, ["claim", "src/", "--why", "refactor"]), /Zamčeno: src/);
-  assert.match(await ok(dirB, ["claim", "src/db.ts"]), /KONFLIKT[\s\S]*Alfa/);
+  assert.match(await ok(dirA, ["claim", "src/", "--why", "refactor"]), /Locked: src/);
+  assert.match(await ok(dirB, ["claim", "src/db.ts"]), /CONFLICT[\s\S]*Alfa/);
 
   // Agent asks the human and waits; the human answers from the web (owner key).
   const asking = ok(dirB, ["ask", "human", "Mám to nasadit?", "--t", t, "--opt", "Ano", "--opt", "Ne", "--wait", "5"]);
@@ -89,24 +94,24 @@ test("CLI: first agent creates a room, second joins by invite link, they talk, t
   const human = new RuchClient({ url, key: ownerKey, name: "Supervizor" });
   const qs = await human.get<{ id: number }[]>("/api/questions?status=open");
   await human.post(`/api/questions/${qs[0].id}/answer`, { choice: "B) Ne", body: "" });
-  assert.match(await asking, /odpověděl\(a\) Supervizor: @Beta Volba: B\) Ne/);
-  assert.match(await ok(dirA, ["mem", "nasadit"]), /potvrdil člověk/);
+  assert.match(await asking, /✓ Supervizor: @Beta Volba: B\) Ne/);
+  assert.match(await ok(dirA, ["mem", "nasadit"]), /human-confirmed/);
 
   // Unknown participants are reported, not silently accepted.
   const unknown = await cli(dirA, ["ask", "Gama", "Kde je config?"]);
-  assert.match(unknown.err, /není účastník/);
+  assert.match(unknown.err, /is not a participant/);
 });
 
 test("roles: agents cannot act as the owner, bad codes are refused", async () => {
   const room = await createRoom();
   const agent = new RuchClient({ url, key: room.agent_code, name: "Alfa" });
-  await assert.rejects(agent.post("/api/room/rotate"), /vlastník/);
+  await assert.rejects(agent.post("/api/room/rotate"), /room owner/);
   assert.equal((await agent.get<{ role: string; agent_code?: string }>("/api/me")).agent_code, undefined);
   const owner = new RuchClient({ url, key: room.owner_key, name: "Jarda" });
   const me = await owner.get<{ role: string; agent_code: string }>("/api/me");
   assert.equal(me.role, "owner");
   assert.equal(me.agent_code, room.agent_code);
-  await assert.rejects(new RuchClient({ url, key: "ZZZZ-ZZZZ-ZZZZ", name: "X" }).get("/api/inbox"), /Neplatný kód/);
+  await assert.rejects(new RuchClient({ url, key: "ZZZZ-ZZZZ-ZZZZ", name: "X" }).get("/api/inbox"), /Invalid room code/);
 });
 
 test("public files: CLI and skill are served with this hub's address, invite page has instructions", async () => {
@@ -128,7 +133,7 @@ test("remote MCP endpoint works for clients without a shell", async () => {
     const { tools } = await client.listTools();
     assert.deepEqual(tools.map((t) => t.name).sort(), ["answer", "ask", "escalate", "files", "handoff", "inbox", "memory", "send", "status", "task", "thread"]);
     const made = await client.callTool({ name: "thread", arguments: { action: "new", title: "Z ChatGPT", text: "ahoj" } });
-    assert.match((made.content as { text: string }[])[0].text, /Vytvořeno T\d+/);
+    assert.match((made.content as { text: string }[])[0].text, /^OK T\d+ M\d+/);
     const err = await client.callTool({ name: "send", arguments: { thread: 9999, text: "x" } });
     assert.equal(err.isError, true);
   } finally {
@@ -149,7 +154,7 @@ test("local stdio MCP server connects with a room code", async () => {
   try {
     assert.match(client.getInstructions() ?? "", /Role: coder/);
     const res = await client.callTool({ name: "inbox", arguments: {} });
-    assert.match((res.content as { text: string }[])[0].text, /Nic nového pro Claude1/);
+    assert.match((res.content as { text: string }[])[0].text, /Nothing new/);
   } finally {
     await client.close();
   }

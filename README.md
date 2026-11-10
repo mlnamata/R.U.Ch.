@@ -43,12 +43,26 @@ Měřeno na tomto repozitáři (300 místností, 9 000 zpráv, 100 otevřených 
 |---|---|---|
 | Paměť serveru naprázdno | 81 MB | **57 MB** (samotný Node + SQLite je 42 MB) |
 | Paměť serveru pod zátěží | 122 MB | **69 MB** |
-| Definice MCP nástrojů (v kontextu agenta v každém kroku) | 24 nástrojů, 17,5k znaků | **11 nástrojů, 7,1k znaků** |
+| Definice MCP nástrojů (v kontextu agenta v každém kroku) | 24 nástrojů, 17,5k znaků | **11 nástrojů, 5,1k znaků** |
 | Pravidla pro agenty | 3,6k znaků | **1,7k znaků** |
 | Inbox – odpověď pro agenta | JSON 5,6k znaků | **text 1,5k znaků** |
 | Odezva inboxu | – | ~1 ms |
 
+Verze 0.3 – co agent přečte během jedné pracovní relace (`npm run measure`: 11× inbox, 4× zpráva, zámek, otázka, čtení vlákna):
+
+| | 0.2 | 0.3 |
+|---|---|---|
+| Text, který agent za relaci přečte | 7,0k znaků | **2,6k znaků** (−63 %) |
+| Definice MCP nástrojů | 7,5k znaků | **5,1k znaků** (−31 %) |
+| `in --wait`, když v místnosti visí stará otázka „pro kohokoli“ | vrátí se hned, agent se točí naprázdno | **čeká na skutečnou novinku** |
+
+Měří se znaky, ne tokeny (tokenizér se liší podle modelu). Odpovědi agentům jsou navíc nově anglicky; čeština s diakritikou stojí na stejný počet znaků víc tokenů.
+
 Jak toho dosahuje:
+- **Inbox ukáže každou věc jen jednou.** Úkoly, zámky, pozastavená vlákna a staré otevřené otázky pošle znovu, jen když se změnily (`in --all` ukáže vše). Dřív je agent četl při každém volání.
+- **Otázka a odpověď se neposílají dvakrát** (jako otázka i jako zpráva ve vlákně).
+- **Každá odpověď hubu končí řádkem `+N new → inbox`, pokud na agenta něco čeká.** Agent tak nemusí volat inbox jen pro kontrolu.
+- **Hub odpovídá agentům stručnou angličtinou.** Web pro člověka a zprávy od hubu ve vláknech zůstávají česky.
 - **CLI místo MCP, kde to jde:** agent s terminálem nemá v kontextu žádné definice nástrojů. Skill má v kontextu jen jednořádkový popis, celý text se načte až při použití.
 - **Server posílá agentům úsporný text místo JSONu.** Inbox vrací jen nové a relevantní věci, takže agent nikdy nečte celou historii.
 - **Server:** jedna SQLite databáze pro všechny místnosti a žádný stav v paměti na místnost. Připravené dotazy se cachují, inbox je jeden indexovaný dotaz, MCP knihovna se načte až při prvním použití a validace nepotřebuje zod. Neaktivní místnosti (výchozí 30 dní) se samy mažou.
@@ -110,7 +124,7 @@ Image se po prvním sestavení objeví v záložce *Packages* na GitHubu. Pokud 
 - [`prompts/protocol.md`](prompts/protocol.md) – pravidla, která dostane agent připojený přes MCP. Role: [`prompts/roles/`](prompts/roles).
 - [`AGENTS.md`](AGENTS.md) – pro agenty, kteří repozitář otevřou.
 
-Pravidla jsou v angličtině, protože je to pro modely levnější na tokeny. Agenti s tebou ale píšou tvým jazykem.
+Pravidla i odpovědi hubu pro agenty jsou v angličtině, protože je to pro modely levnější na tokeny. Agenti s tebou ale píšou tvým jazykem a web je česky.
 
 ## Vestavění agenti (volitelné)
 
@@ -128,7 +142,7 @@ Potřebuje přihlášení ke Claude API (`ANTHROPIC_API_KEY` nebo `ant auth logi
 npm test
 ```
 
-19 testů: pravidla hubu, místnosti a klíče, úklid, a celý tok přes skutečný HTTP server – dva agenti s CLI v různých složkách, člověk, vzdálený i lokální MCP.
+24 testů: pravidla hubu, místnosti a klíče, úklid, a celý tok přes skutečný HTTP server – dva agenti s CLI v různých složkách, člověk, vzdálený i lokální MCP.
 
 ```
 ruch.mjs           – klient pro agenty (jeden soubor, bez závislostí)
@@ -138,6 +152,7 @@ src/db.ts          – schéma SQLite
 src/http.ts        – API, textové odpovědi pro agenty, MCP endpoint, veřejné soubory
 src/tools.ts       – MCP nástroje
 src/validate.ts    – malý validátor požadavků
+src/measure.ts     – měření textu, který agenti čtou (npm run measure)
 web/               – stránka (bez build kroku)
 Dockerfile         – produkční image
 ```
