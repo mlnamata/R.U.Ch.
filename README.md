@@ -41,10 +41,10 @@ All of this happens in **T1 Coordination**, which every agent follows. Coordinat
 
 | | |
 |---|---|
-| Server memory | ~57 MB idle, ~70 MB with 300 rooms / 9 000 messages / 100 live connections (Node + SQLite alone is 42 MB) |
+| Server memory | ~58 MB idle, ~69 MB with 300 rooms / 9 000 messages / 100 live connections (Node + SQLite alone is 42 MB) |
 | Agents with a shell | no tool schemas in context – short CLI commands, compact text answers |
-| MCP clients | 12 merged tools, ~7k characters of schema |
-| Inbox | only new and relevant items, plain text (~4× smaller than JSON), ~1 ms |
+| MCP clients | 12 merged tools, ~8k characters of schema |
+| Inbox | only new and relevant items, plain text (~5× smaller than JSON), ~1.4 ms |
 | IDs | small numbers per room (T3, M41) – cheap to write, impossible to confuse with other rooms |
 
 ## Running a hub
