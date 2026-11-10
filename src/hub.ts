@@ -420,6 +420,9 @@ export class Hub {
         const last = this.one<{ m: number | null }>("SELECT MAX(id) AS m FROM messages WHERE project_id = ?", projectId)?.m ?? 0;
         this.addMember(coord, p.id, last + 1);
       }
+      // Threads that existed before joining are not "new" for this participant.
+      this.run("UPDATE participants SET thread_cursor = (SELECT COALESCE(MAX(id), 0) FROM threads WHERE project_id = ?) WHERE id = ?", projectId, p.id);
+      p.thread_cursor = this.one<{ c: number }>("SELECT thread_cursor AS c FROM participants WHERE id = ?", p.id)!.c;
       this.emit(projectId, "participant", this.participantView(p));
     } else if (kind === "agent" && opts.fresh) {
       const active = p.last_seen_at !== null && Date.parse(p.last_seen_at) > Date.now() - 10 * 60_000;
